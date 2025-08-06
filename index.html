@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DrawLima - Collaborative Whiteboard</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <style>
+        /* Apply the Poppins font and a very light gray background to the body */
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #F8F9FA; /* Canvas background color */
+            overflow: hidden; /* Prevent scrollbars */
+        }
+
+        /* Custom animation for the modal fade-in */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+
+        /* Custom animation for the toolbar slide-up */
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slide-up {
+            animation: slideUp 0.5s ease-out forwards;
+        }
+        
+        /* Custom styles for the range input slider */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #e5e7eb; /* gray-200 */
+            border-radius: 9999px;
+            outline: none;
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: #4f46e5; /* indigo-600 */
+            cursor: pointer;
+            border-radius: 50%;
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: #4f46e5; /* indigo-600 */
+            cursor: pointer;
+            border-radius: 50%;
+        }
+    </style>
+</head>
+<body class="antialiased">
+
+    <canvas id="whiteboard-canvas"></canvas>
+
+    <div id="username-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-2">Welcome to DrawLima</h2>
+            <p class="text-gray-500 mb-6">Please enter a username to join.</p>
+            <form id="username-form">
+                <input type="text" id="username-input" placeholder="Your Name" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 transition" required>
+                <button type="submit" class="w-full mt-4 bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 active:scale-95 transition-transform duration-100">
+                    Start Drawing
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <div id="toolbar" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white rounded-2xl shadow-xl p-3 flex items-center space-x-4 opacity-0">
+        <div class="flex items-center space-x-2">
+            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95 ring-2 ring-offset-2 ring-transparent" data-color="#EF4444" style="background-color: #EF4444;"></button>
+            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95 ring-2 ring-offset-2 ring-transparent" data-color="#3B82F6" style="background-color: #3B82F6;"></button>
+            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95 ring-2 ring-offset-2 ring-transparent" data-color="#22C55E" style="background-color: #22C55E;"></button>
+            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95 ring-2 ring-offset-2 ring-transparent" data-color="#EAB308" style="background-color: #EAB308;"></button>
+            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95 ring-2 ring-offset-2 ring-transparent" data-color="#000000" style="background-color: #000000;"></button>
+            <div class="relative w-8 h-8">
+                <input type="color" id="color-picker" value="#000000" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                <div class="w-7 h-7 rounded-full border-2 border-dashed border-gray-300 flex items-center justify-center" style="background-image: conic-gradient(red, yellow, lime, aqua, blue, magenta, red);"></div>
+            </div>
+        </div>
+
+        <div class="w-px h-8 bg-gray-200"></div>
+
+        <div class="flex items-center space-x-3 w-32">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" /></svg>
+            <input type="range" id="thickness-slider" min="1" max="50" value="5" class="w-full">
+        </div>
+
+        <div class="w-px h-8 bg-gray-200"></div>
+
+        <button id="eraser-btn" class="p-2 rounded-lg hover:bg-gray-100 active:scale-95 transition-all">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600"><path d="M19.83 2.17a2.83 2.83 0 0 1 4 4L12 18H6v-6l11.83-11.83Z"/><path d="m18 12 4 4"/><path d="M12.5 11.5 8 7"/><path d="M5 3 3 5"/><path d="M15 21H6a2 2 0 0 1-2-2V9"/></svg>
+        </button>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // =========================================================================
+    // 1. ELEMENT REFERENCES & STATE INITIALIZATION
+    // =========================================================================
+    const canvas = document.getElementById('whiteboard-canvas');
+    const context = canvas.getContext('2d');
+
+    const usernameModal = document.getElementById('username-modal');
+    const usernameForm = document.getElementById('username-form');
+    const usernameInput = document.getElementById('username-input');
+    const toolbar = document.getElementById('toolbar');
+    
+    // Toolbar controls
+    const colorSwatches = document.querySelectorAll('.color-swatch');
+    const colorPicker = document.getElementById('color-picker');
+    const thicknessSlider = document.getElementById('thickness-slider');
+    const eraserBtn = document.getElementById('eraser-btn');
+
+    // State variables
+    let isDrawing = false;
+    let lastX = 0;
+    let lastY = 0;
+    let drawingState = {
+        username: 'Anonymous',
+        color: '#000000',
+        lineWidth: 5,
+    };
+    const canvasBackgroundColor = '#F8F9FA';
+    let ws; // WebSocket instance
+
+    // =========================================================================
+    // 2. CANVAS SETUP
+    // =========================================================================
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        // NOTE: Resizing the canvas clears its content. 
+        // A more advanced version would redraw the state from an array of past drawing actions.
+        // For this real-time focused app, we start fresh, which is fine.
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas(); // Initial size
+
+    // Set initial drawing styles for a softer, "marker" feel
+    context.lineJoin = 'round';
+    context.lineCap = 'round';
+
+    // =========================================================================
+    // 3. WEBSOCKET COMMUNICATION
+    // =========================================================================
+    function initializeWebSocket(username) {
+        drawingState.username = username;
+        // IMPORTANT: Use 'wss://' for secure WebSocket connections on a live, HTTPS site.
+        // This connects to the VPS domain you provided.
+        ws = new WebSocket('wss://miaou.vps.webdock.cloud');
+
+        ws.onopen = () => {
+            console.log('[Client] WebSocket connection established.');
+        };
+
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            console.log('[Client] Message received from server:', data);
+            
+            // When a message is received, draw it on the canvas.
+            if (data.type === 'draw') {
+                drawOnCanvas(data);
+            }
+        };
+
+        ws.onclose = () => {
+            console.log('[Client] WebSocket connection closed.');
+            // Optionally, you could try to reconnect here.
+            alert('Connection to the server has been lost. Please refresh the page.');
+        };
+
+        ws.onerror = (error) => {
+            console.error('[Client] WebSocket error:', error);
+            alert('A connection error occurred. Please check the console and refresh.');
+        };
+    }
+    
+    // Function to send drawing data to the server
+    function sendDrawData(x0, y0, x1, y1) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const data = {
+                type: 'draw',
+                username: drawingState.username,
+                payload: {
+                    x0: x0 / canvas.width,
+                    y0: y0 / canvas.height,
+                    x1: x1 / canvas.width,
+                    y1: y1 / canvas.height,
+                    color: drawingState.color,
+                    lineWidth: drawingState.lineWidth
+                }
+            };
+            ws.send(JSON.stringify(data));
+        }
+    }
+
+    // =========================================================================
+    // 4. DRAWING LOGIC
+    // =========================================================================
+
+    // This function draws based on data received from the server
+    function drawOnCanvas(data) {
+        const { x0, y0, x1, y1, color, lineWidth } = data.payload;
+        context.beginPath();
+        context.moveTo(x0 * canvas.width, y0 * canvas.height);
+        context.lineTo(x1 * canvas.width, y1 * canvas.height);
+        context.strokeStyle = color;
+        context.lineWidth = lineWidth;
+        context.stroke();
+        context.closePath();
+    }
+    
+    // Event listener for starting a drawing path
+    function startDrawing(e) {
+        isDrawing = true;
+        [lastX, lastY] = [e.offsetX, e.offsetY];
+    }
+    
+    // Event listener for drawing on the canvas
+    function draw(e) {
+        if (!isDrawing) return;
+
+        const currentX = e.offsetX;
+        const currentY = e.offsetY;
+
+        // Draw locally first for immediate feedback
+        context.beginPath();
+        context.moveTo(lastX, lastY);
+        context.lineTo(currentX, currentY);
+        context.strokeStyle = drawingState.color;
+        context.lineWidth = drawingState.lineWidth;
+        context.stroke();
+        context.closePath();
+        
+        // Send the data to the server for broadcasting
+        sendDrawData(lastX, lastY, currentX, currentY);
+
+        [lastX, lastY] = [currentX, currentY];
+    }
+
+    // Event listener to stop drawing
+    function stopDrawing() {
+        isDrawing = false;
+    }
+
+    // Bind mouse events
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseout', stopDrawing); // Stop if mouse leaves canvas
+
+    // =========================================================================
+    // 5. UI EVENT HANDLERS
+    // =========================================================================
+
+    // Handle Username form submission
+    usernameForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const username = usernameInput.value.trim();
+        if (username) {
+            initializeWebSocket(username);
+            usernameModal.style.display = 'none'; // Hide modal
+            toolbar.classList.add('animate-slide-up'); // Animate toolbar in
+            toolbar.style.opacity = 1; // Make it visible
+        }
+    });
+
+    // Update the active state indicator on color swatches
+    function updateActiveSwatch(activeElement) {
+        colorSwatches.forEach(swatch => {
+            swatch.classList.remove('ring-indigo-500');
+            swatch.classList.add('ring-transparent');
+        });
+        if (activeElement) {
+            activeElement.classList.add('ring-indigo-500');
+            activeElement.classList.remove('ring-transparent');
+            eraserBtn.classList.remove('bg-gray-200');
+        }
+    }
+    
+    // Handle color swatch clicks
+    colorSwatches.forEach(swatch => {
+        swatch.addEventListener('click', () => {
+            drawingState.color = swatch.dataset.color;
+            updateActiveSwatch(swatch);
+        });
+    });
+
+    // Handle native color picker input
+    colorPicker.addEventListener('input', (e) => {
+        drawingState.color = e.target.value;
+        updateActiveSwatch(null); // No swatch is active
+    });
+    
+    // Handle thickness slider input
+    thicknessSlider.addEventListener('input', (e) => {
+        drawingState.lineWidth = e.target.value;
+    });
+
+    // Handle eraser button click
+    eraserBtn.addEventListener('click', () => {
+        drawingState.color = canvasBackgroundColor;
+        updateActiveSwatch(null);
+        eraserBtn.classList.add('bg-gray-200'); // Give visual feedback for eraser
+    });
+    
+    // Set initial active color swatch
+    updateActiveSwatch(document.querySelector('.color-swatch[data-color="#000000"]'));
+});
+</script>
+
+</body>
+</html>
