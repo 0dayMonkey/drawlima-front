@@ -9,10 +9,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
-        /* NEW: Prevents "pull-to-refresh" and other annoying mobile browser behaviors */
         body, html {
             overscroll-behavior: none;
-            position: fixed; /* Prevents scrolling */
+            position: fixed;
             width: 100%;
             height: 100%;
         }
@@ -26,25 +25,23 @@
             position: absolute;
             top: 0; left: 0;
             width: 100%; height: 100%;
-            /* NEW: Disable browser gestures like pinch-zoom and double-tap zoom on the canvas itself */
             touch-action: none;
         }
         #cursors-container { pointer-events: none; z-index: 10; }
         .user-cursor {
             position: absolute; display: flex; align-items: center;
-            transition: transform 0.05s linear; /* Faster transition for smoother feel */
+            transition: transform 0.05s linear;
         }
         .cursor-label {
             padding: 2px 8px; border-radius: 9999px; color: white;
             font-size: 12px; font-weight: 500; margin-left: 4px;
             white-space: nowrap;
         }
-        /* NEW: Disable text selection for a more app-like feel on mobile */
         .no-select {
-            -webkit-user-select: none; /* Safari */
-            -ms-user-select: none; /* IE 10+ */
-            user-select: none; /* Standard */
-            -webkit-touch-callout: none; /* Disable callout on long press (iOS) */
+            -webkit-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
         }
         @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
@@ -108,7 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 2. STATE
     let drawingHistory = [];
-    const view = { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1.0 }; // Start centered
+    const view = { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1.0 };
     let isDrawing = false;
     let isPanning = false;
     let panStart = { x: 0, y: 0 };
@@ -129,6 +126,7 @@ document.addEventListener('DOMContentLoaded', () => {
         context.translate(view.x, view.y);
         context.scale(view.zoom, view.zoom);
         
+        // This is safe now because drawingHistory is guaranteed to be an array
         drawingHistory.forEach(action => {
             if (action.type === 'draw') {
                 drawOnCanvas(action.payload);
@@ -167,7 +165,8 @@ document.addEventListener('DOMContentLoaded', () => {
             switch (message.type) {
                 case 'welcome':
                     localUser = message.user;
-                    drawingHistory = message.drawingHistory;
+                    // *** FIX *** Ensure drawingHistory is always an array.
+                    drawingHistory = message.drawingHistory || [];
                     message.allUsers.forEach(user => {
                         if (user.id !== localUser.id) createOrUpdateCursor(user);
                     });
@@ -217,11 +216,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function handlePointerMove(e) {
-        e.preventDefault(); // Prevents unwanted scrolling on mobile
+        e.preventDefault();
         const clientX = e.touches ? e.touches[0]?.clientX : e.clientX;
         const clientY = e.touches ? e.touches[0]?.clientY : e.clientY;
         
-        if (localUser.id) { // Move local cursor and send data
+        if (localUser.id) {
             createOrUpdateCursor({ ...localUser, x: clientX, y: clientY });
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'cursor-move', payload: { x: clientX, y: clientY } }));
