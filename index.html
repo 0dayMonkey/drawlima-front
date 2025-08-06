@@ -110,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isPanning = false;
     let panStart = { x: 0, y: 0 };
     let lastPos = { x: 0, y: 0 };
+    let localMousePos = { x: 0, y: 0 }; // FIX: State for local mouse position
     const canvasBackgroundColor = '#F8F9FA';
     let localUser = { id: null, username: 'Anonymous', color: '#000000' };
     let drawingState = { color: '#000000', lineWidth: 5 };
@@ -118,22 +119,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 3. CORE RENDER LOOP
     function drawScene() {
-        requestAnimationFrame(drawScene);
+        requestAnimationFrame(drawScene); // Loop
+        
+        // Clear canvas
         context.fillStyle = canvasBackgroundColor;
         context.fillRect(0, 0, canvas.width, canvas.height);
         
+        // Apply camera view
         context.save();
         context.translate(view.x, view.y);
         context.scale(view.zoom, view.zoom);
         
-        // This is safe now because drawingHistory is guaranteed to be an array
-        drawingHistory.forEach(action => {
+        // Draw all historical actions in world space
+        (drawingHistory || []).forEach(action => {
             if (action.type === 'draw') {
                 drawOnCanvas(action.payload);
             }
         });
         
         context.restore();
+
+        // FIX: Update local cursor position within the render loop for smoothness
+        if (localUser.id) {
+            createOrUpdateCursor({ ...localUser, x: localMousePos.x, y: localMousePos.y });
+        }
     }
 
     // 4. COORDINATE TRANSFORMATION
@@ -141,6 +150,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return {
             x: (screenX - view.x) / view.zoom,
             y: (screenY - view.y) / view.zoom
+        };
+    }
+
+    // FIX: New function to convert world coordinates back to screen coordinates
+    function worldToScreen(worldX, worldY) {
+        return {
+            x: (worldX * view.zoom) + view.x,
+            y: (worldY * view.zoom) + view.y,
         };
     }
     
@@ -154,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
     context.lineJoin = 'round';
     context.lineCap = 'round';
     updateActiveSwatch(document.querySelector('.color-swatch[data-color="#000000"]'));
-    drawScene(); // Start the render loop
+    drawScene();
 
     // 6. WEBSOCKETS
     function initializeWebSocket(username) {
@@ -165,7 +182,6 @@ document.addEventListener('DOMContentLoaded', () => {
             switch (message.type) {
                 case 'welcome':
                     localUser = message.user;
-                    // *** FIX *** Ensure drawingHistory is always an array.
                     drawingHistory = message.drawingHistory || [];
                     message.allUsers.forEach(user => {
                         if (user.id !== localUser.id) createOrUpdateCursor(user);
@@ -181,8 +197,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     drawingHistory.push(message);
                     break;
                 case 'cursor-move':
+                    // FIX: Process incoming cursor moves in world coordinates
                     const user = otherUsers.get(message.id);
-                    if(user) createOrUpdateCursor({ ...user, ...message.payload });
+                    if (user) {
+                        const { worldX, worldY } = message.payload;
+                        const screenPos = worldToScreen(worldX, worldY);
+                        createOrUpdateCursor({ ...user, x: screenPos.x, y: screenPos.y });
+                    }
                     break;
             }
         };
@@ -192,22 +213,19 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 7. INPUT HANDLERS (PAN & DRAW)
     function handlePointerDown(e) {
-        if (e.touches && e.touches.length > 1) { // Pan with two fingers
-            isPanning = true;
-            isDrawing = false;
+        if (e.touches && e.touches.length > 1) {
+            isPanning = true; isDrawing = false;
             panStart.x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
             panStart.y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
             return;
         }
-        if (e.button === 2) { // Pan with right-click
+        if (e.button === 2) {
             e.preventDefault();
-            isPanning = true;
-            isDrawing = false;
-            panStart.x = e.clientX;
-            panStart.y = e.clientY;
+            isPanning = true; isDrawing = false;
+            panStart.x = e.clientX; panStart.y = e.clientY;
             return;
         }
-        if (e.button === 0 || (e.touches && e.touches.length === 1)) { // Draw
+        if (e.button === 0 || (e.touches && e.touches.length === 1)) {
             isDrawing = true;
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -220,11 +238,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const clientX = e.touches ? e.touches[0]?.clientX : e.clientX;
         const clientY = e.touches ? e.touches[0]?.clientY : e.clientY;
         
-        if (localUser.id) {
-            createOrUpdateCursor({ ...localUser, x: clientX, y: clientY });
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'cursor-move', payload: { x: clientX, y: clientY } }));
-            }
+        // FIX: Don't update DOM directly, just update state for render loop
+        localMousePos = { x: clientX, y: clientY };
+        
+        if (localUser.id && ws && ws.readyState === WebSocket.OPEN) {
+            // FIX: Send cursor position in WORLD coordinates for synchronization
+            const worldPos = screenToWorld(clientX, clientY);
+            ws.send(JSON.stringify({ type: 'cursor-move', payload: { worldX: worldPos.x, worldY: worldPos.y } }));
         }
         
         if (isPanning) {
@@ -246,8 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 payload: {
                     x0: lastPos.x, y0: lastPos.y,
                     x1: currentPos.x, y1: currentPos.y,
-                    color: drawingState.color,
-                    lineWidth: drawingState.lineWidth
+                    color: drawingState.color, lineWidth: drawingState.lineWidth
                 }
             };
             drawingHistory.push(drawAction);
@@ -272,7 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('touchend', handlePointerUp);
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-    // 8. HELPER & UI FUNCTIONS
+    // 8. HELPER & UI FUNCTIONS (Unchanged from previous versions)
     function drawOnCanvas({ x0, y0, x1, y1, color, lineWidth }) {
         context.beginPath();
         context.moveTo(x0, y0);
@@ -292,7 +311,7 @@ document.addEventListener('DOMContentLoaded', () => {
             cursorEl.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="${user.color}" stroke="white" stroke-width="1.5"><path d="M4.028 4.223l15.753 5.251a.5.5 0 0 1 .219.724l-6.074 8.1a.5.5 0 0 1-.806-.03l-3.32-4.884a.5.5 0 0 1 .03-.606L15.5 7.5 7.71 16.94l-3.46-3.461a.5.5 0 0 1 .178-.854z"/></svg><span class="cursor-label" style="background-color: ${user.color};">${user.username}</span>`;
             cursorsContainer.appendChild(cursorEl);
         }
-        if (user.x && user.y) {
+        if (user.x != null && user.y != null) {
             cursorEl.style.transform = `translate(${user.x}px, ${user.y}px)`;
         }
         otherUsers.set(user.id, { ...otherUsers.get(user.id), ...user });
