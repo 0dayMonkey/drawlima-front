@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/uuid/8.3.2/uuid.min.js" integrity="sha512-D2EDXohO_GkCXcefNYrAZKj0TJ6ZWvE0vrjV9M6o+0MBdLaxO2HKb1gBvjCifb2vb8sL_3IeLoKKnP29U0FAlA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/uuid/8.3.2/uuid.min.js" integrity="sha512-RRNax3GJ/poA0Efr1PcdA2U3M4L4LiaH1Hk21iY6fN4tr2hV9eYk8u2vL2sI3Gj7aZ2/dIe3GJBC2K_gBqjig==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style type="text/tailwindcss">
         body {
             font-family: 'Poppins', sans-serif;
@@ -142,7 +142,7 @@
         let username = null;
         let currentRoomId = null;
         let otherUsersInRoom = new Map(); // { userId -> { username } }
-        let userCursors = new Map(); // { userId -> { element, color, username } }
+        let userCursors = new Map(); // { userId -> { element, color, username, worldX, worldY } }
         
         // Drawing state
         let committedStrokes = []; // Strokes that are finished
@@ -382,7 +382,10 @@
             }
             if (e.button !== 0) return; // Only left click for drawing/erasing
             
-            const [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
+            let [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
+            // Clamp coordinates to the whiteboard boundaries
+            worldX = Math.max(0, Math.min(viewport.worldWidth, worldX));
+            worldY = Math.max(0, Math.min(viewport.worldHeight, worldY));
 
             if (tool === 'eraser') {
                 localAction.isErasing = true;
@@ -414,10 +417,14 @@
                 viewport.panY += dy;
                 localAction.panStart = { x: e.clientX, y: e.clientY };
                 redrawCanvas();
+                updateAllCursorPositions(); // CORRECTED: Update cursors on pan
                 return;
             }
 
-            const [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
+            let [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
+            // CORRECTED: Clamp coordinates to the whiteboard boundaries
+            worldX = Math.max(0, Math.min(viewport.worldWidth, worldX));
+            worldY = Math.max(0, Math.min(viewport.worldHeight, worldY));
 
             // Throttle cursor updates
             const now = Date.now();
@@ -560,6 +567,13 @@
         function updateCursor(payload) { /* ... same as before ... */ }
         function removeCursor(userId) { /* ... same as before ... */ }
         function updateUserList() { /* ... same as before ... */ }
+        // CORRECTED: New function to update all cursor positions
+        function updateAllCursorPositions() {
+            userCursors.forEach(cursor => {
+                const [screenX, screenY] = worldToScreen(cursor.worldX, cursor.worldY);
+                cursor.element.style.transform = `translate(${screenX}px, ${screenY}px)`;
+            });
+        }
         
         // --- Initialize App ---
         init();
@@ -641,9 +655,14 @@
                 cursorEl.className = 'absolute transition-transform duration-100 ease-linear';
                 cursorEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="transform -rotate-45"><path d="M21.19,2.81,2.81,21.19a2,2,0,0,1-2.83-2.83L18.36,1.64a2,2,0,0,1,2.83,2.83Z"/></svg><span class="absolute top-5 left-2 px-2 py-0.5 text-xs text-white rounded-full" style="background-color: ${color};">${username}</span>`;
                 cursorsContainer.appendChild(cursorEl);
-                userCursors.set(userId, { element: cursorEl, color, username });
+                // CORRECTED: Store world coordinates along with the element
+                userCursors.set(userId, { element: cursorEl, color, username, worldX: x, worldY: y });
             }
             const cursor = userCursors.get(userId);
+            // CORRECTED: Update stored world coordinates
+            cursor.worldX = x;
+            cursor.worldY = y;
+
             const [screenX, screenY] = worldToScreen(x, y);
             cursor.element.style.transform = `translate(${screenX}px, ${screenY}px)`;
             if(cursor.color !== color) {
@@ -670,6 +689,7 @@
             viewport.panY = mouseY - worldY * newZoom;
             viewport.zoom = newZoom;
             redrawCanvas();
+            updateAllCursorPositions(); // CORRECTED: Update cursors on zoom
         }
         function handleTouchStart(e) {
             e.preventDefault();
@@ -705,6 +725,7 @@
                 viewport.zoom = newZoom;
                 localAction.touchStartDist = touchNowDist;
                 redrawCanvas();
+                updateAllCursorPositions(); // CORRECTED: Update cursors on pinch zoom
             }
         }
         function handleTouchEnd(e) {
