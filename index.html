@@ -2,370 +2,695 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>DrawLima - Intelligent Eraser</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drawlima - Collaborative Whiteboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
-    <style>
-        body, html { overscroll-behavior: none; position: fixed; width: 100%; height: 100%; }
-        body { font-family: 'Poppins', sans-serif; background-color: #F8F9FA; overflow: hidden; cursor: none; }
-        canvas, #cursors-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; touch-action: none; }
-        #cursors-container { pointer-events: none; z-index: 10; }
-        .user-cursor { position: absolute; display: flex; align-items: center; transition: transform 0.05s linear; }
-        .cursor-label { padding: 2px 8px; border-radius: 9999px; color: white; font-size: 12px; font-weight: 500; margin-left: 4px; white-space: nowrap; }
-        .no-select { -webkit-user-select: none; -ms-user-select: none; user-select: none; -webkit-touch-callout: none; }
-        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
-        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-        .animate-slide-up { animation: slideUp 0.5s ease-out forwards; }
+    <style type="text/tailwindcss">
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #F8F9FA; /* Light neutral canvas background */
+            overscroll-behavior: none; /* Prevents pull-to-refresh on mobile */
+        }
+        /* Custom classes for Claude-inspired UI */
+        @layer components {
+            .card {
+                @apply bg-white rounded-xl shadow-lg transition-all;
+            }
+            .btn {
+                @apply px-4 py-2 rounded-lg font-semibold text-white transition-all duration-150 ease-in-out;
+            }
+            .btn-primary {
+                @apply bg-blue-500 hover:bg-blue-600 active:scale-[0.98];
+            }
+            .btn-secondary {
+                @apply bg-gray-200 text-gray-700 hover:bg-gray-300 active:scale-[0.98];
+            }
+            .input-field {
+                @apply w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400;
+            }
+        }
+        /* Crayon/Marker cursor style */
+        .drawing-cursor {
+            cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='4'/></svg>") 12 12, auto;
+        }
+        .panning-cursor { cursor: grab; }
+        .panning-cursor:active { cursor: grabbing; }
+
+        /* Smooth transitions */
+        .fade-in { animation: fadeIn 0.5s ease-in-out forwards; }
+        .fade-out { animation: fadeOut 0.5s ease-in-out forwards; }
+        .slide-up { animation: slideUp 0.5s ease-in-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; display: none; } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
-<body class="antialiased no-select">
+<body class="overflow-hidden">
 
-    <canvas id="whiteboard-canvas"></canvas>
-    <div id="cursors-container"></div>
+    <div id="app-container" class="w-screen h-screen">
 
-    <div id="username-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
-        <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
-            <h2 class="text-2xl font-semibold text-gray-800 mb-2">Welcome to DrawLima</h2>
-            <p class="text-gray-500 mb-6">Please enter a username to join.</p>
-            <form id="username-form">
-                <input type="text" id="username-input" placeholder="Your Name" class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400 transition" required>
-                <button type="submit" class="w-full mt-4 bg-indigo-600 text-white font-semibold py-3 rounded-xl hover:bg-indigo-700 active:scale-95 transition-transform duration-100">Start Drawing</button>
-            </form>
-        </div>
-    </div>
-    
-    <div id="toolbar" class="fixed bottom-0 left-0 w-full sm:left-1/2 sm:bottom-6 sm:w-auto sm:-translate-x-1/2 bg-white sm:rounded-2xl shadow-xl p-3 flex items-center justify-center space-x-2 sm:space-x-4 opacity-0">
-        <div class="flex items-center space-x-1 sm:space-x-2">
-            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95" data-color="#EF4444" style="background-color: #EF4444;"></button>
-            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95" data-color="#3B82F6" style="background-color: #3B82F6;"></button>
-            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95" data-color="#22C55E" style="background-color: #22C55E;"></button>
-            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95" data-color="#EAB308" style="background-color: #EAB308;"></button>
-            <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95" data-color="#000000" style="background-color: #000000;"></button>
-            <div class="relative w-7 h-7">
-                <input type="color" id="color-picker" value="#000000" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
-                <div class="w-full h-full rounded-full border-2 border-dashed border-gray-300" style="background-image: conic-gradient(red, yellow, lime, aqua, blue, magenta, red);"></div>
+        <div id="modal-username" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 fade-in">
+            <div class="card w-full max-w-sm p-8 text-center">
+                <h1 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Drawlima</h1>
+                <p class="text-gray-500 mb-6">Choose a username to start collaborating.</p>
+                <form id="form-username">
+                    <input type="text" id="input-username" placeholder="Enter your name..." class="input-field mb-4" required>
+                    <button type="submit" class="btn btn-primary w-full">Continue</button>
+                </form>
             </div>
         </div>
-        <div class="w-px h-8 bg-gray-200"></div>
-        <div class="flex items-center space-x-2 w-24 sm:w-32">
-             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-gray-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8h16M4 16h16"/></svg>
-            <input type="range" id="thickness-slider" min="1" max="50" value="5" class="w-full">
+
+        <div id="view-lobby" class="hidden w-full h-full p-4 md:p-8 overflow-y-auto">
+            <div class="max-w-4xl mx-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <h1 class="text-3xl font-bold text-gray-800">Whiteboards</h1>
+                    <button id="btn-create-new" class="btn btn-primary">Create New</button>
+                </div>
+                <div id="whiteboard-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    </div>
+            </div>
         </div>
-        <div class="w-px h-8 bg-gray-200"></div>
-        <button id="eraser-btn" class="p-2 rounded-lg hover:bg-gray-100 active:scale-95 transition-all">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600"><path d="M19.83 2.17a2.83 2.83 0 0 1 4 4L12 18H6v-6l11.83-11.83Z"/><path d="m18 12 4 4"/><path d="M12.5 11.5 8 7"/><path d="M5 3 3 5"/><path d="M15 21H6a2 2 0 0 1-2-2V9"/></svg>
-        </button>
+        <div id="modal-create-whiteboard" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
+            <div class="card w-full max-w-sm p-8">
+                <h2 class="text-xl font-bold mb-4">Create a New Whiteboard</h2>
+                <form id="form-create-whiteboard">
+                    <label for="input-whiteboard-name" class="block text-sm font-medium text-gray-600 mb-1">Name</label>
+                    <input type="text" id="input-whiteboard-name" placeholder="My Awesome Project" class="input-field mb-4" required>
+
+                    <label for="select-whiteboard-size" class="block text-sm font-medium text-gray-600 mb-1">Canvas Size</label>
+                    <select id="select-whiteboard-size" class="input-field mb-6">
+                        <option value="1000x1000">Small (1000 x 1000)</option>
+                        <option value="3000x3000" selected>Medium (3000 x 3000)</option>
+                        <option value="5000x5000">Large (5000 x 5000)</option>
+                    </select>
+                    <div class="flex justify-end gap-3">
+                        <button type="button" id="btn-cancel-create" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Create</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+
+        <div id="view-whiteboard" class="hidden w-full h-full relative">
+            <canvas id="whiteboard-canvas" class="absolute top-0 left-0"></canvas>
+            <div id="cursors-container" class="absolute top-0 left-0 w-full h-full pointer-events-none"></div>
+
+            <div id="toolbar" class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 p-2 card slide-up">
+                <div class="flex items-center gap-1">
+                    <button class="color-btn w-6 h-6 rounded-full border-2 border-blue-500" style="background-color: #EF4444;" data-color="#EF4444"></button>
+                    <button class="color-btn w-6 h-6 rounded-full" style="background-color: #F97316;" data-color="#F97316"></button>
+                    <button class="color-btn w-6 h-6 rounded-full" style="background-color: #84CC16;" data-color="#84CC16"></button>
+                    <button class="color-btn w-6 h-6 rounded-full" style="background-color: #3B82F6;" data-color="#3B82F6"></button>
+                    <button class="color-btn w-6 h-6 rounded-full" style="background-color: #8B5CF6;" data-color="#8B5CF6"></button>
+                    <button class="color-btn w-6 h-6 rounded-full" style="background-color: #000000;" data-color="#000000"></button>
+                    <input type="color" id="color-picker-native" class="w-0 h-0 opacity-0 absolute">
+                    <button id="btn-more-colors" class="w-6 h-6 rounded-full flex items-center justify-center bg-gray-200 text-gray-600">+</button>
+                </div>
+                <div class="h-6 w-px bg-gray-200"></div>
+                <div class="flex items-center gap-2">
+                    <span class="text-sm">Size:</span>
+                    <input type="range" id="thickness-slider" min="2" max="50" value="5" class="w-24">
+                </div>
+                <div class="h-6 w-px bg-gray-200"></div>
+                <button id="tool-brush" class="p-2 rounded-md bg-blue-100 text-blue-600">Brush</button>
+                <button id="tool-eraser" class="p-2 rounded-md">Eraser</button>
+                 <div class="h-6 w-px bg-gray-200"></div>
+                <button id="btn-back-to-lobby" class="btn btn-secondary text-sm">Lobby</button>
+            </div>
+            
+            <div id="user-list-overlay" class="absolute top-4 right-4 card p-3">
+                 <h3 class="font-semibold text-sm mb-2">Online</h3>
+                 <div id="user-list-content"></div>
+            </div>
+        </div>
     </div>
 
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    // 1. ELEMENT REFERENCES
-    const canvas = document.getElementById('whiteboard-canvas');
-    const context = canvas.getContext('2d');
-    const cursorsContainer = document.getElementById('cursors-container');
-    const usernameModal = document.getElementById('username-modal');
-    const usernameForm = document.getElementById('username-form');
-    const usernameInput = document.getElementById('username-input');
-    const toolbar = document.getElementById('toolbar');
-    const colorSwatches = document.querySelectorAll('.color-swatch');
-    const colorPicker = document.getElementById('color-picker');
-    const thicknessSlider = document.getElementById('thickness-slider');
-    const eraserBtn = document.getElementById('eraser-btn');
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
 
-    // 2. STATE
-    let drawingHistory = [];
-    const savedView = localStorage.getItem('drawlima-view');
-    const view = savedView ? JSON.parse(savedView) : { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1.0 };
-    let localUser = { id: null, username: 'Anonymous', color: '#000000' };
-    let drawingState = { color: '#000000', lineWidth: 5, tool: 'draw' }; // tool: 'draw' or 'erase'
-    let isPointerDown = false;
-    let pointerAction = null; // 'drawing', 'panning', or null
-    let panStart = { x: 0, y: 0 };
-    let currentStroke = null;
-    let hoveredStrokeId = null;
-    let localMousePos = { x: 0, y: 0 };
-    const otherUsers = new Map();
-    let ws;
-    let isConnectionReady = false;
+        // --- CONFIGURATION ---
+        // IMPORTANT: Change this to your VPS's domain and port.
+        // Use wss:// for secure connections (required for https sites).
+        const WS_URL = 'wss://miaou.vps.webdock.cloud:8080';
 
-    // 3. CORE RENDER LOOP
-    function drawScene() {
-        requestAnimationFrame(drawScene);
-        context.fillStyle = '#F8F9FA';
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        
-        context.save();
-        context.translate(view.x, view.y);
-        
-        (drawingHistory || []).forEach(stroke => {
-            const isHovered = (stroke.strokeId === hoveredStrokeId && drawingState.tool === 'erase');
-            drawStroke(stroke, isHovered);
-        });
+        // --- STATE MANAGEMENT ---
+        let ws;
+        let userId = null;
+        let username = null;
+        let currentRoomId = null;
+        let localStrokes = []; // Holds all strokes for the current room
+        let userCursors = new Map(); // { userId -> { element, color, username } }
+        let otherUsersInRoom = new Map(); // { userId -> { username } }
 
-        if (currentStroke) {
-            drawStroke(currentStroke);
-        }
-        
-        context.restore();
-
-        if (localUser.id) {
-            createOrUpdateCursor({ ...localUser, x: localMousePos.x, y: localMousePos.y });
-        }
-    }
-
-    // 4. DRAWING & HIT-DETECTION LOGIC
-    function drawStroke(stroke, isHovered = false) {
-        if (!stroke || stroke.points.length < 2) return;
-        
-        context.beginPath();
-        context.moveTo(stroke.points[0].x, stroke.points[0].y);
-        for (let i = 1; i < stroke.points.length; i++) {
-            context.lineTo(stroke.points[i].x, stroke.points[i].y);
-        }
-        
-        context.strokeStyle = isHovered ? '#FF4136' : stroke.color; // Red if hovered by eraser
-        context.lineWidth = stroke.lineWidth;
-        context.lineCap = 'round';
-        context.lineJoin = 'round';
-        context.stroke();
-    }
-
-    function findHoveredStroke(worldPos) {
-        let closestStrokeId = null;
-        for (let i = drawingHistory.length - 1; i >= 0; i--) {
-            const stroke = drawingHistory[i];
-            if (stroke.ownerId !== localUser.id) continue;
-            for (const point of stroke.points) {
-                const distance = Math.hypot(point.x - worldPos.x, point.y - worldPos.y);
-                if (distance < stroke.lineWidth / 2 + 5) { // Tolerance of 5px
-                    return stroke.strokeId;
-                }
-            }
-        }
-        return null;
-    }
-
-    // 5. COORDINATE TRANSFORMATION
-    function screenToWorld(screenX, screenY) { return { x: (screenX - view.x) / view.zoom, y: (screenY - view.y) / view.zoom }; }
-    function worldToScreen(worldX, worldY) { return { x: (worldX * view.zoom) + view.x, y: (worldY * view.zoom) + view.y }; }
-    
-    // 6. SETUP & INITIALIZATION
-    function resizeCanvas() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-    updateActiveTool();
-    drawScene();
-
-    // 7. WEBSOCKETS
-    function initializeWebSocket(username) {
-        ws = new WebSocket('wss://miaou.vps.webdock.cloud/drawlima/');
-        ws.onopen = () => ws.send(JSON.stringify({ type: 'login', username }));
-        ws.onmessage = (event) => {
-            const message = JSON.parse(event.data);
-            switch (message.type) {
-                case 'welcome':
-                    localUser = message.user;
-                    drawingHistory = message.drawingHistory || [];
-                    (message.allUsers || []).forEach(user => { if (user.id !== localUser.id) createOrUpdateCursor(user); });
-                    isConnectionReady = true;
-                    break;
-                case 'user-joined': if (message.user.id !== localUser.id) createOrUpdateCursor(message.user); break;
-                case 'user-left': removeCursor(message.id); break;
-                case 'add-stroke':
-    // MODIFICATION : Vérifier si le trait existe déjà avant de l'ajouter
-    const strokeExists = drawingHistory.some(s => s.strokeId === message.stroke.strokeId);
-    if (strokeExists) {
-        break; // On ignore notre propre écho
-    }
-    drawingHistory.push(message.stroke);
-    break;
-                case 'delete-stroke': drawingHistory = drawingHistory.filter(s => s.strokeId !== message.strokeId); break;
-                case 'cursor-move':
-                    if (message.id === localUser.id) return;
-                    const user = otherUsers.get(message.id) || message;
-                    const screenPos = worldToScreen(message.payload.worldX, message.payload.worldY);
-                    createOrUpdateCursor({ ...user, x: screenPos.x, y: screenPos.y, username: user.username, color: user.color });
-                    break;
-            }
+        // Drawing state
+        let isDrawing = false;
+        let isPanning = false;
+        let lastX = 0;
+        let lastY = 0;
+        let currentStroke = null;
+        let tool = 'brush'; // 'brush' or 'eraser'
+        let drawingConfig = {
+            color: '#EF4444',
+            thickness: 5,
+            eraserColor: '#F8F9FA'
         };
-        ws.onclose = () => console.log('[Client] WebSocket connection closed.');
-        ws.onerror = (error) => console.error('[Client] WebSocket error:', error);
-    }
-    
-    // 8. INPUT HANDLERS
-    function handlePointerDown(e) {
-        if (!isConnectionReady) return;
-        isPointerDown = true;
-        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-
-        if ((e.touches && e.touches.length > 1) || e.button === 2) {
-            pointerAction = 'panning';
-            panStart.x = e.touches ? (e.touches[0].clientX + e.touches[1].clientX) / 2 : clientX;
-            panStart.y = e.touches ? (e.touches[0].clientY + e.touches[1].clientY) / 2 : clientY;
-            return;
-        }
         
-        pointerAction = 'drawing';
-        const worldPos = screenToWorld(clientX, clientY);
+        // Panning and Zooming state
+        let viewport = {
+            panX: 0,
+            panY: 0,
+            zoom: 1,
+            worldWidth: 3000,
+            worldHeight: 3000
+        };
+        let panStart = { x: 0, y: 0 };
+        let touchStartDist = 0;
 
-        if (drawingState.tool === 'erase') {
-            if (hoveredStrokeId && ws?.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'delete-stroke', strokeId: hoveredStrokeId }));
+        // --- DOM ELEMENTS ---
+        const usernameModal = document.getElementById('modal-username');
+        const usernameForm = document.getElementById('form-username');
+        const usernameInput = document.getElementById('input-username');
+        
+        const lobbyView = document.getElementById('view-lobby');
+        const whiteboardListEl = document.getElementById('whiteboard-list');
+        const createNewBtn = document.getElementById('btn-create-new');
+        const createModal = document.getElementById('modal-create-whiteboard');
+        const createForm = document.getElementById('form-create-whiteboard');
+        const cancelCreateBtn = document.getElementById('btn-cancel-create');
+
+        const whiteboardView = document.getElementById('view-whiteboard');
+        const canvas = document.getElementById('whiteboard-canvas');
+        const ctx = canvas.getContext('2d');
+        const cursorsContainer = document.getElementById('cursors-container');
+        const userListOverlay = document.getElementById('user-list-overlay');
+        const userListContent = document.getElementById('user-list-content');
+
+        const toolbar = document.getElementById('toolbar');
+        const colorBtns = document.querySelectorAll('.color-btn');
+        const moreColorsBtn = document.getElementById('btn-more-colors');
+        const nativeColorPicker = document.getElementById('color-picker-native');
+        const thicknessSlider = document.getElementById('thickness-slider');
+        const brushToolBtn = document.getElementById('tool-brush');
+        const eraserToolBtn = document.getElementById('tool-eraser');
+        const backToLobbyBtn = document.getElementById('btn-back-to-lobby');
+
+        // --- INITIALIZATION ---
+        function init() {
+            // Setup initial event listeners
+            usernameForm.addEventListener('submit', handleUsernameSubmit);
+            createNewBtn.addEventListener('click', () => createModal.classList.remove('hidden'));
+            cancelCreateBtn.addEventListener('click', () => createModal.classList.add('hidden'));
+            createForm.addEventListener('submit', handleCreateRoom);
+            backToLobbyBtn.addEventListener('click', handleLeaveRoom);
+
+            setupToolbar();
+            setupCanvasEvents();
+        }
+
+        // --- VIEW MANAGEMENT ---
+        function showView(view) {
+            usernameModal.classList.add('hidden');
+            lobbyView.classList.add('hidden');
+            whiteboardView.classList.add('hidden');
+            if (view === 'lobby') lobbyView.classList.remove('hidden');
+            if (view === 'whiteboard') whiteboardView.classList.remove('hidden');
+        }
+
+        // --- USER & WEBSOCKET FLOW ---
+
+        function handleUsernameSubmit(e) {
+            e.preventDefault();
+            username = usernameInput.value.trim();
+            if (username) {
+                usernameModal.classList.add('fade-out');
+                setTimeout(() => usernameModal.classList.add('hidden'), 500);
+                connectWebSocket();
             }
-        } else {
-            currentStroke = {
-                strokeId: crypto.randomUUID(),
-                ownerId: localUser.id,
-                color: drawingState.color,
-                lineWidth: drawingState.lineWidth,
-                points: [worldPos]
+        }
+
+        function connectWebSocket() {
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected.');
+                // Send username for authentication
+                sendMessage('auth', { username });
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected. Attempting to reconnect...');
+                // You might want to show a "disconnected" message to the user here.
+                setTimeout(connectWebSocket, 3000); // Reconnect after 3 seconds
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                ws.close();
             };
         }
-    }
-    
-    function handlePointerMove(e) {
-        if (!isConnectionReady) return;
-        e.preventDefault();
-        const clientX = e.touches ? e.touches[0]?.clientX : e.clientX;
-        const clientY = e.touches ? e.touches[0]?.clientY : e.clientY;
 
-        localMousePos = { x: clientX, y: clientY };
-        const worldPos = screenToWorld(clientX, clientY);
-        
-        if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'cursor-move', payload: { worldX: worldPos.x, worldY: worldPos.y } }));
+        function sendMessage(type, payload) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type, payload }));
+            }
         }
         
-        if (isPointerDown) {
-            if (pointerAction === 'panning') {
-                let currentPanX = clientX, currentPanY = clientY;
-                if (e.touches && e.touches.length > 1) {
-                    currentPanX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                    currentPanY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                }
-                view.x += currentPanX - panStart.x;
-                view.y += currentPanY - panStart.y;
-                panStart = { x: currentPanX, y: currentPanY };
-            } else if (pointerAction === 'drawing' && drawingState.tool === 'draw' && currentStroke) {
-                currentStroke.points.push(worldPos);
+        function handleWebSocketMessage({ type, payload }) {
+            // console.log('Received message:', type, payload);
+            switch (type) {
+                case 'authenticated':
+                    userId = payload.userId;
+                    updateWhiteboardList(payload.whiteboards);
+                    showView('lobby');
+                    break;
+                case 'room_list_update':
+                    updateWhiteboardList(payload.whiteboards);
+                    break;
+                case 'joined_room':
+                    currentRoomId = payload.roomId;
+                    viewport.worldWidth = payload.size.width;
+                    viewport.worldHeight = payload.size.height;
+                    localStrokes = payload.strokes;
+                    otherUsersInRoom.clear();
+                    payload.users.forEach(u => {
+                        if (u.id !== userId) otherUsersInRoom.set(u.id, u);
+                    });
+                    showView('whiteboard');
+                    setupWhiteboard();
+                    break;
+                case 'user_joined':
+                    if (payload.user.id !== userId) {
+                        otherUsersInRoom.set(payload.user.id, payload.user);
+                        updateUserList();
+                    }
+                    break;
+                case 'user_left':
+                    otherUsersInRoom.delete(payload.userId);
+                    removeCursor(payload.userId);
+                    updateUserList();
+                    break;
+                case 'new_stroke':
+                    localStrokes.push(payload);
+                    drawStroke(payload);
+                    break;
+                case 'stroke_deleted':
+                    localStrokes = localStrokes.filter(s => s.id !== payload.strokeId);
+                    redrawCanvas();
+                    break;
+                case 'cursor_update':
+                    updateCursor(payload);
+                    break;
             }
-        } else { // Hover logic when pointer is not down
-             if (drawingState.tool === 'erase') {
-                hoveredStrokeId = findHoveredStroke(worldPos);
+        }
+        
+        // --- LOBBY LOGIC ---
+        
+        function updateWhiteboardList(whiteboards) {
+            whiteboardListEl.innerHTML = '';
+            if (whiteboards.length === 0) {
+                 whiteboardListEl.innerHTML = `<p class="text-gray-500 col-span-full text-center">No whiteboards yet. Why not create one?</p>`;
             } else {
-                hoveredStrokeId = null;
+                whiteboards.forEach(room => {
+                    const card = document.createElement('div');
+                    card.className = 'card p-4 flex flex-col justify-between hover:shadow-xl cursor-pointer';
+                    card.dataset.roomId = room.id;
+                    card.innerHTML = `
+                        <div>
+                            <h3 class="font-bold text-lg truncate">${room.name}</h3>
+                            <p class="text-sm text-gray-500">by ${room.creator}</p>
+                        </div>
+                        <div class="mt-4 text-sm text-gray-600 flex justify-between items-center">
+                            <span>${room.userCount} user(s) online</span>
+                            <span>${new Date(room.createdAt).toLocaleDateString()}</span>
+                        </div>
+                    `;
+                    card.addEventListener('click', () => {
+                        sendMessage('join_room', { roomId: room.id });
+                    });
+                    whiteboardListEl.appendChild(card);
+                });
             }
         }
-    }
 
-    // Dans la fonction handlePointerUp
-    function handlePointerUp() {
-    if (isPointerDown && pointerAction === 'panning') {
-        localStorage.setItem('drawlima-view', JSON.stringify(view));
-    }
-    if (isPointerDown && pointerAction === 'drawing' && drawingState.tool === 'draw' && currentStroke?.points.length > 1) {
-
-        // MODIFICATION : Ajout optimiste à l'historique local
-        drawingHistory.push(currentStroke);
-
-        if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'add-stroke', stroke: currentStroke }));
-        }
-    }
-    isPointerDown = false;
-    pointerAction = null;
-    currentStroke = null;
-}
-
-    canvas.addEventListener('mousedown', handlePointerDown);
-    canvas.addEventListener('mousemove', handlePointerMove);
-    window.addEventListener('mouseup', handlePointerUp);
-    canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
-    canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
-    window.addEventListener('touchend', handlePointerUp);
-    canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-    // 9. UI HELPERS
-    function createOrUpdateCursor(user) {
-        let cursorEl = document.getElementById(`cursor-${user.id}`);
-        if (!cursorEl) {
-            cursorEl = document.createElement('div');
-            cursorEl.id = `cursor-${user.id}`;
-            cursorEl.className = 'user-cursor';
-            const userColor = user.color || '#000000';
-            const userName = user.username || 'Anonymous';
+        function handleCreateRoom(e) {
+            e.preventDefault();
+            const name = document.getElementById('input-whiteboard-name').value;
+            const sizeValue = document.getElementById('select-whiteboard-size').value;
+            const [width, height] = sizeValue.split('x').map(Number);
             
-            cursorEl.innerHTML = `
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="color: ${userColor}; transform: rotate(90deg);">
-                    <path d="M4.22,19.78a2.7,2.7,0,0,1,0-3.82L16.46,3.71a.75.75,0,0,1,1.06,1.06L5.27,17a1.2,1.2,0,0,0,0,1.7Z"/>
-                    <path d="M16.46,3.71,19,1.14a.75.75,0,0,1,1.06,1.06L17.52,4.77Z"/>
-                </svg>
-                <span class="cursor-label" style="background-color: ${userColor};">${userName}</span>
-            `;
-            cursorsContainer.appendChild(cursorEl);
+            if (name) {
+                sendMessage('create_room', { name, size: {width, height} });
+                createModal.classList.add('hidden');
+                createForm.reset();
+            }
         }
         
-        cursorEl.style.transform = `translate(${user.x}px, ${user.y}px)`;
+        function handleLeaveRoom() {
+            showView('lobby');
+            currentRoomId = null;
+            localStrokes = [];
+            // Inform server we left (implicitly handled by joining another room or disconnecting)
+            // but for a clean UI transition, we do this client-side first.
+        }
+
+        // --- WHITEBOARD & CANVAS LOGIC ---
         
-        if (user.id !== localUser.id) {
-            otherUsers.set(user.id, user);
+        function setupWhiteboard() {
+            resizeCanvas();
+            resetViewport();
+            redrawCanvas();
+            updateUserList();
+            document.body.classList.add('drawing-cursor');
         }
-    }
 
-    function removeCursor(userId) {
-        const cursorEl = document.getElementById(`cursor-${userId}`);
-        if (cursorEl) {
-            cursorEl.remove();
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            redrawCanvas();
         }
-        otherUsers.delete(userId);
-    }
-    
-    usernameForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const username = usernameInput.value.trim();
-        if (username) {
-            initializeWebSocket(username);
-            usernameModal.style.display = 'none';
-            toolbar.classList.add('animate-slide-up');
-            toolbar.style.opacity = 1;
+        
+        function resetViewport() {
+            viewport.panX = (canvas.width / 2) - (viewport.worldWidth / 2 * viewport.zoom);
+            viewport.panY = (canvas.height / 2) - (viewport.worldHeight / 2 * viewport.zoom);
         }
-    });
 
-    function updateActiveTool() {
-        if (drawingState.tool === 'erase') {
-            eraserBtn.classList.add('bg-blue-200');
-            colorSwatches.forEach(s => s.classList.remove('ring-2', 'ring-indigo-500', 'ring-offset-2'));
-        } else {
-            eraserBtn.classList.remove('bg-blue-200');
-            const activeSwatch = document.querySelector(`.color-swatch[data-color="${drawingState.color}"]`);
-            colorSwatches.forEach(s => s.classList.remove('ring-2', 'ring-indigo-500', 'ring-offset-2'));
-            if (activeSwatch) activeSwatch.classList.add('ring-2', 'ring-indigo-500', 'ring-offset-2');
+        window.addEventListener('resize', resizeCanvas);
+
+        function setupCanvasEvents() {
+            // Mouse events
+            canvas.addEventListener('mousedown', startDrawing);
+            canvas.addEventListener('mousemove', draw);
+            canvas.addEventListener('mouseup', stopDrawing);
+            canvas.addEventListener('mouseout', stopDrawing);
+            canvas.addEventListener('wheel', handleZoom, { passive: false });
+
+            // Touch events for mobile
+            canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+            canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+            canvas.addEventListener('touchend', handleTouchEnd);
         }
-    }
-    
-    colorSwatches.forEach(swatch => {
-        swatch.addEventListener('click', () => {
-            drawingState.tool = 'draw';
-            drawingState.color = swatch.dataset.color;
-            updateActiveTool();
-        });
+        
+        // --- Drawing ---
+        function startDrawing(e) {
+            if (e.button === 2) { // Right click for panning
+                isPanning = true;
+                panStart.x = e.clientX;
+                panStart.y = e.clientY;
+                document.body.classList.remove('drawing-cursor');
+                document.body.classList.add('panning-cursor');
+                return;
+            }
+            if (e.button !== 0) return; // Only left click draws
+            
+            isDrawing = true;
+            const [x, y] = getCanvasCoords(e);
+            const [worldX, worldY] = screenToWorld(x, y);
+
+            currentStroke = {
+                tool: tool,
+                color: tool === 'eraser' ? drawingConfig.eraserColor : drawingConfig.color,
+                thickness: drawingConfig.thickness,
+                points: [{ x: worldX, y: worldY }]
+            };
+            
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function draw(e) {
+            if (isPanning) {
+                const dx = e.clientX - panStart.x;
+                const dy = e.clientY - panStart.y;
+                viewport.panX += dx;
+                viewport.panY += dy;
+                panStart.x = e.clientX;
+                panStart.y = e.clientY;
+                redrawCanvas();
+                return;
+            }
+
+            if (!isDrawing) {
+                // Send cursor position even when not drawing
+                const [x,y] = getCanvasCoords(e);
+                const [worldX, worldY] = screenToWorld(x,y);
+                sendMessage('cursor_move', { x: worldX, y: worldY, color: drawingConfig.color });
+                return;
+            }
+            
+            const [x, y] = getCanvasCoords(e);
+            const [worldX, worldY] = screenToWorld(x, y);
+            
+            currentStroke.points.push({ x: worldX, y: worldY });
+            
+            ctx.lineWidth = drawingConfig.thickness * viewport.zoom;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = tool === 'eraser' ? drawingConfig.eraserColor : drawingConfig.color;
+            
+            // For that "crayon" texture
+            ctx.globalAlpha = 0.8;
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.globalAlpha = 1.0;
+        }
+
+        function stopDrawing(e) {
+            if (isPanning) {
+                isPanning = false;
+                document.body.classList.remove('panning-cursor');
+                document.body.classList.add('drawing-cursor');
+            }
+
+            if (isDrawing) {
+                isDrawing = false;
+                ctx.closePath();
+                if (currentStroke && currentStroke.points.length > 1) {
+                    localStrokes.push(currentStroke);
+                    sendMessage('draw_stroke', currentStroke);
+                }
+                currentStroke = null;
+            }
+        }
+        
+        function drawStroke(stroke) {
+            if (!stroke || stroke.points.length < 2) return;
+
+            ctx.beginPath();
+            const startPoint = worldToScreen(stroke.points[0].x, stroke.points[0].y);
+            ctx.moveTo(startPoint[0], startPoint[1]);
+            
+            ctx.lineWidth = stroke.thickness * viewport.zoom;
+            ctx.strokeStyle = stroke.color;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            for (let i = 1; i < stroke.points.length; i++) {
+                const point = worldToScreen(stroke.points[i].x, stroke.points[i].y);
+                ctx.lineTo(point[0], point[1]);
+            }
+            ctx.stroke();
+            ctx.closePath();
+        }
+
+        function redrawCanvas() {
+            if (!currentRoomId) return;
+            // Clear canvas
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.restore();
+
+            // Draw background / world boundary
+            const [tlx, tly] = worldToScreen(0, 0);
+            const [brx, bry] = worldToScreen(viewport.worldWidth, viewport.worldHeight);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(tlx, tly, brx - tlx, bry - tly);
+            ctx.strokeStyle = '#E5E7EB';
+            ctx.strokeRect(tlx, tly, brx - tlx, bry - tly);
+
+            // Draw all strokes
+            localStrokes.forEach(drawStroke);
+        }
+
+        // --- Panning & Zooming ---
+        function handleZoom(e) {
+            e.preventDefault();
+            const zoomAmount = e.deltaY * -0.001;
+            const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * (1 + zoomAmount)));
+            
+            const mouseX = e.clientX;
+            const mouseY = e.clientY;
+
+            const worldX = (mouseX - viewport.panX) / viewport.zoom;
+            const worldY = (mouseY - viewport.panY) / viewport.zoom;
+            
+            viewport.panX = mouseX - worldX * newZoom;
+            viewport.panY = mouseY - worldY * newZoom;
+            viewport.zoom = newZoom;
+            
+            redrawCanvas();
+        }
+        
+        function getCanvasCoords(e) {
+            return [e.clientX, e.clientY];
+        }
+
+        function screenToWorld(x, y) {
+            return [(x - viewport.panX) / viewport.zoom, (y - viewport.panY) / viewport.zoom];
+        }
+
+        function worldToScreen(x, y) {
+            return [x * viewport.zoom + viewport.panX, y * viewport.zoom + viewport.panY];
+        }
+
+        // --- Touch controls ---
+        function handleTouchStart(e) {
+            e.preventDefault();
+            if (e.touches.length === 1) { // Single finger for drawing
+                startDrawing({ button: 0, clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+            } else if (e.touches.length === 2) { // Two fingers for panning/zooming
+                isDrawing = false;
+                isPanning = true;
+                panStart.x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                panStart.y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                touchStartDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+            }
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault();
+            if (e.touches.length === 1 && isDrawing) {
+                draw({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+            } else if (e.touches.length === 2 && isPanning) {
+                // Panning
+                const panNow = {
+                    x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+                    y: (e.touches[0].clientY + e.touches[1].clientY) / 2
+                };
+                const dx = panNow.x - panStart.x;
+                const dy = panNow.y - panStart.y;
+                viewport.panX += dx;
+                viewport.panY += dy;
+                panStart.x = panNow.x;
+                panStart.y = panNow.y;
+
+                // Zooming
+                const touchNowDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                const zoomFactor = touchNowDist / touchStartDist;
+                
+                const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * zoomFactor));
+                const worldX = (panNow.x - viewport.panX) / viewport.zoom;
+                const worldY = (panNow.y - viewport.panY) / viewport.zoom;
+                
+                viewport.panX = panNow.x - worldX * newZoom;
+                viewport.panY = panNow.y - worldY * newZoom;
+                viewport.zoom = newZoom;
+
+                touchStartDist = touchNowDist;
+                
+                redrawCanvas();
+            }
+        }
+
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            stopDrawing();
+            isPanning = false;
+        }
+
+        // --- Toolbar ---
+        function setupToolbar() {
+            colorBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    colorBtns.forEach(b => b.style.borderColor = 'transparent');
+                    btn.style.borderColor = '#3B82F6'; // a highlight color
+                    drawingConfig.color = btn.dataset.color;
+                    setTool('brush');
+                });
+            });
+            
+            moreColorsBtn.addEventListener('click', () => nativeColorPicker.click());
+            nativeColorPicker.addEventListener('input', (e) => {
+                drawingConfig.color = e.target.value;
+                setTool('brush');
+            });
+
+            thicknessSlider.addEventListener('input', (e) => {
+                drawingConfig.thickness = e.target.value;
+            });
+            
+            brushToolBtn.addEventListener('click', () => setTool('brush'));
+            eraserToolBtn.addEventListener('click', () => setTool('eraser'));
+        }
+
+        function setTool(newTool) {
+            tool = newTool;
+            brushToolBtn.classList.toggle('bg-blue-100', tool === 'brush');
+            brushToolBtn.classList.toggle('text-blue-600', tool === 'brush');
+            eraserToolBtn.classList.toggle('bg-blue-100', tool === 'eraser');
+            eraserToolBtn.classList.toggle('text-blue-600', tool === 'eraser');
+        }
+
+        // --- Cursors & User List ---
+        function updateCursor({ userId, username, x, y, color }) {
+            if (!userCursors.has(userId)) {
+                const cursorEl = document.createElement('div');
+                cursorEl.className = 'absolute transition-transform duration-100 ease-linear';
+                cursorEl.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="transform -rotate-45"><path d="M21.19,2.81,2.81,21.19a2,2,0,0,1-2.83-2.83L18.36,1.64a2,2,0,0,1,2.83,2.83Z"/></svg>
+                    <span class="absolute top-5 left-2 px-2 py-0.5 text-xs text-white rounded-full" style="background-color: ${color};">${username}</span>
+                `;
+                cursorsContainer.appendChild(cursorEl);
+                userCursors.set(userId, { element: cursorEl, color, username });
+            }
+
+            const cursor = userCursors.get(userId);
+            const [screenX, screenY] = worldToScreen(x, y);
+            cursor.element.style.transform = `translate(${screenX}px, ${screenY}px)`;
+            
+            // Update color if it has changed
+            if(cursor.color !== color) {
+                cursor.color = color;
+                cursor.element.querySelector('svg').style.fill = color;
+                cursor.element.querySelector('span').style.backgroundColor = color;
+            }
+        }
+        
+        function removeCursor(userId) {
+            if (userCursors.has(userId)) {
+                userCursors.get(userId).element.remove();
+                userCursors.delete(userId);
+            }
+        }
+        
+        function updateUserList() {
+            userListContent.innerHTML = '';
+            // Add self
+            const selfEl = document.createElement('div');
+            selfEl.className = 'text-sm font-semibold';
+            selfEl.textContent = `${username} (You)`;
+            userListContent.appendChild(selfEl);
+
+            // Add others
+            otherUsersInRoom.forEach(user => {
+                 const userEl = document.createElement('div');
+                 userEl.className = 'text-sm text-gray-600';
+                 userEl.textContent = user.username;
+                 userListContent.appendChild(userEl);
+            });
+        }
+
+        // --- Start the app ---
+        init();
     });
-    colorPicker.addEventListener('input', (e) => {
-        drawingState.tool = 'draw';
-        drawingState.color = e.target.value;
-        updateActiveTool();
-    });
-    thicknessSlider.addEventListener('input', (e) => { drawingState.lineWidth = e.target.value; });
-    eraserBtn.addEventListener('click', () => {
-        drawingState.tool = 'erase';
-        updateActiveTool();
-    });
-});
-</script>
+    </script>
 </body>
 </html>
