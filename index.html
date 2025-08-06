@@ -179,12 +179,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 case 'delete-stroke': drawingHistory = drawingHistory.filter(s => s.strokeId !== message.strokeId); break;
                 case 'cursor-move':
                     if (message.id === localUser.id) return;
-                    const user = otherUsers.get(message.id);
-                    if (user) {
-                        const { worldX, worldY } = message.payload;
-                        const screenPos = worldToScreen(worldX, worldY);
-                        createOrUpdateCursor({ ...user, x: screenPos.x, y: screenPos.y });
-                    }
+                    const user = otherUsers.get(message.id) || message;
+                    const screenPos = worldToScreen(message.payload.worldX, message.payload.worldY);
+                    createOrUpdateCursor({ ...user, x: screenPos.x, y: screenPos.y, username: user.username, color: user.color });
                     break;
             }
         };
@@ -282,8 +279,40 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('contextmenu', e => e.preventDefault());
 
     // 9. UI HELPERS
-    function createOrUpdateCursor(user) { /* ... (code inchangé) ... */ }
-    function removeCursor(userId) { /* ... (code inchangé) ... */ }
+    function createOrUpdateCursor(user) {
+        let cursorEl = document.getElementById(`cursor-${user.id}`);
+        if (!cursorEl) {
+            cursorEl = document.createElement('div');
+            cursorEl.id = `cursor-${user.id}`;
+            cursorEl.className = 'user-cursor';
+            const userColor = user.color || '#000000';
+            const userName = user.username || 'Anonymous';
+            
+            cursorEl.innerHTML = `
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="color: ${userColor}; transform: rotate(90deg);">
+                    <path d="M4.22,19.78a2.7,2.7,0,0,1,0-3.82L16.46,3.71a.75.75,0,0,1,1.06,1.06L5.27,17a1.2,1.2,0,0,0,0,1.7Z"/>
+                    <path d="M16.46,3.71,19,1.14a.75.75,0,0,1,1.06,1.06L17.52,4.77Z"/>
+                </svg>
+                <span class="cursor-label" style="background-color: ${userColor};">${userName}</span>
+            `;
+            cursorsContainer.appendChild(cursorEl);
+        }
+        
+        cursorEl.style.transform = `translate(${user.x}px, ${user.y}px)`;
+        
+        if (user.id !== localUser.id) {
+            otherUsers.set(user.id, user);
+        }
+    }
+
+    function removeCursor(userId) {
+        const cursorEl = document.getElementById(`cursor-${userId}`);
+        if (cursorEl) {
+            cursorEl.remove();
+        }
+        otherUsers.delete(userId);
+    }
+    
     usernameForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const username = usernameInput.value.trim();
