@@ -175,7 +175,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     break;
                 case 'user-joined': if (message.user.id !== localUser.id) createOrUpdateCursor(message.user); break;
                 case 'user-left': removeCursor(message.id); break;
-                case 'add-stroke': drawingHistory.push(message.stroke); break;
+                case 'add-stroke':
+    // MODIFICATION : Vérifier si le trait existe déjà avant de l'ajouter
+    const strokeExists = drawingHistory.some(s => s.strokeId === message.stroke.strokeId);
+    if (strokeExists) {
+        break; // On ignore notre propre écho
+    }
+    drawingHistory.push(message.stroke);
+    break;
                 case 'delete-stroke': drawingHistory = drawingHistory.filter(s => s.strokeId !== message.strokeId); break;
                 case 'cursor-move':
                     if (message.id === localUser.id) return;
@@ -256,19 +263,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Dans la fonction handlePointerUp
     function handlePointerUp() {
-        if (isPointerDown && pointerAction === 'panning') {
-            localStorage.setItem('drawlima-view', JSON.stringify(view));
-        }
-        if (isPointerDown && pointerAction === 'drawing' && drawingState.tool === 'draw' && currentStroke?.points.length > 1) {
-            if (ws?.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'add-stroke', stroke: currentStroke }));
-            }
-        }
-        isPointerDown = false;
-        pointerAction = null;
-        currentStroke = null;
+    if (isPointerDown && pointerAction === 'panning') {
+        localStorage.setItem('drawlima-view', JSON.stringify(view));
     }
+    if (isPointerDown && pointerAction === 'drawing' && drawingState.tool === 'draw' && currentStroke?.points.length > 1) {
+
+        // MODIFICATION : Ajout optimiste à l'historique local
+        drawingHistory.push(currentStroke);
+
+        if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'add-stroke', stroke: currentStroke }));
+        }
+    }
+    isPointerDown = false;
+    pointerAction = null;
+    currentStroke = null;
+}
 
     canvas.addEventListener('mousedown', handlePointerDown);
     canvas.addEventListener('mousemove', handlePointerMove);
