@@ -90,6 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let localMousePos = { x: 0, y: 0 };
     const otherUsers = new Map();
     let ws;
+    let isConnectionReady = false;
 
     // 3. CORE RENDER LOOP
     function drawScene() {
@@ -170,6 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     localUser = message.user;
                     drawingHistory = message.drawingHistory || [];
                     (message.allUsers || []).forEach(user => { if (user.id !== localUser.id) createOrUpdateCursor(user); });
+                    isConnectionReady = true;
                     break;
                 case 'user-joined': if (message.user.id !== localUser.id) createOrUpdateCursor(message.user); break;
                 case 'user-left': removeCursor(message.id); break;
@@ -192,6 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 8. INPUT HANDLERS
     function handlePointerDown(e) {
+        if (!isConnectionReady) return;
         isPointerDown = true;
         const clientX = e.touches ? e.touches[0].clientX : e.clientX;
         const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -222,38 +225,40 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function handlePointerMove(e) {
-    e.preventDefault();
-    const clientX = e.touches ? e.touches[0]?.clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0]?.clientY : e.clientY;
+        if (!isConnectionReady) return;
+        e.preventDefault();
+        const clientX = e.touches ? e.touches[0]?.clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0]?.clientY : e.clientY;
 
-    localMousePos = { x: clientX, y: clientY };
-    const worldPos = screenToWorld(clientX, clientY);
-    
-    if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'cursor-move', payload: { worldX: worldPos.x, worldY: worldPos.y } }));
-    }
-    
-    if (isPointerDown) {
-        if (pointerAction === 'panning') {
-            let currentPanX = clientX, currentPanY = clientY;
-            if (e.touches && e.touches.length > 1) {
-                currentPanX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                currentPanY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        localMousePos = { x: clientX, y: clientY };
+        const worldPos = screenToWorld(clientX, clientY);
+        
+        if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'cursor-move', payload: { worldX: worldPos.x, worldY: worldPos.y } }));
+        }
+        
+        if (isPointerDown) {
+            if (pointerAction === 'panning') {
+                let currentPanX = clientX, currentPanY = clientY;
+                if (e.touches && e.touches.length > 1) {
+                    currentPanX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    currentPanY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                }
+                view.x += currentPanX - panStart.x;
+                view.y += currentPanY - panStart.y;
+                panStart = { x: currentPanX, y: currentPanY };
+            } else if (pointerAction === 'drawing' && drawingState.tool === 'draw' && currentStroke) {
+                currentStroke.points.push(worldPos);
             }
-            view.x += currentPanX - panStart.x;
-            view.y += currentPanY - panStart.y;
-            panStart = { x: currentPanX, y: currentPanY };
-        } else if (pointerAction === 'drawing' && drawingState.tool === 'draw' && currentStroke) {
-            currentStroke.points.push(worldPos);
-        }
-    } else { // Hover logic when pointer is not down
-         if (drawingState.tool === 'erase') {
-            hoveredStrokeId = findHoveredStroke(worldPos);
-        } else {
-            hoveredStrokeId = null;
+        } else { // Hover logic when pointer is not down
+             if (drawingState.tool === 'erase') {
+                hoveredStrokeId = findHoveredStroke(worldPos);
+            } else {
+                hoveredStrokeId = null;
+            }
         }
     }
-}
+
     function handlePointerUp() {
         if (isPointerDown && pointerAction === 'panning') {
             localStorage.setItem('drawlima-view', JSON.stringify(view));
