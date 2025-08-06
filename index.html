@@ -41,7 +41,6 @@
             margin-left: 4px;
             white-space: nowrap;
         }
-        /* Custom animations from v1 */
         @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
         @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
@@ -51,7 +50,9 @@
 <body class="antialiased">
 
     <canvas id="whiteboard-canvas"></canvas>
-    <div id="cursors-container"></div> <div id="username-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+    <div id="cursors-container"></div>
+
+    <div id="username-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
         <div class="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-sm text-center">
             <h2 class="text-2xl font-semibold text-gray-800 mb-2">Welcome to DrawLima</h2>
             <p class="text-gray-500 mb-6">Please enter a username to join.</p>
@@ -87,7 +88,9 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    // --- ELEMENT REFERENCES ---
+    // =========================================================================
+    // 1. ELEMENT REFERENCES (DEFINED UPFRONT TO PREVENT REFERENCE ERRORS)
+    // =========================================================================
     const canvas = document.getElementById('whiteboard-canvas');
     const context = canvas.getContext('2d');
     const cursorsContainer = document.getElementById('cursors-container');
@@ -96,7 +99,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const usernameInput = document.getElementById('username-input');
     const toolbar = document.getElementById('toolbar');
     
-    // --- STATE ---
+    // Toolbar controls
+    const colorSwatches = document.querySelectorAll('.color-swatch');
+    const colorPicker = document.getElementById('color-picker');
+    const thicknessSlider = document.getElementById('thickness-slider');
+    const eraserBtn = document.getElementById('eraser-btn'); // Now defined here!
+
+    // =========================================================================
+    // 2. STATE INITIALIZATION
+    // =========================================================================
     let isDrawing = false;
     let lastX = 0, lastY = 0;
     const canvasBackgroundColor = '#F8F9FA';
@@ -105,31 +116,35 @@ document.addEventListener('DOMContentLoaded', () => {
     const otherUsers = new Map(); // Stores other users' data and cursor elements
     let ws;
 
-    // --- CANVAS & UI SETUP ---
+    // =========================================================================
+    // 3. CANVAS & UI SETUP
+    // =========================================================================
     function resizeCanvas() {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
+
     context.lineJoin = 'round';
     context.lineCap = 'round';
+    
+    // This call is now safe because eraserBtn is defined above.
     updateActiveSwatch(document.querySelector('.color-swatch[data-color="#000000"]'));
     
-    // --- WEBSOCKET COMMUNICATION ---
+    // =========================================================================
+    // 4. WEBSOCKET COMMUNICATION
+    // =========================================================================
     function initializeWebSocket(username) {
         ws = new WebSocket('wss://miaou.vps.webdock.cloud/drawlima/');
 
         ws.onopen = () => {
             console.log('[Client] WebSocket connection established.');
-            // Send login message to the server
             ws.send(JSON.stringify({ type: 'login', username: username }));
         };
 
         ws.onmessage = (event) => {
             const message = JSON.parse(event.data);
-            
-            // Message Router
             switch (message.type) {
                 case 'welcome':
                     localUser = message.user;
@@ -138,9 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     });
                     break;
                 case 'user-joined':
-                    if (message.user.id !== localUser.id) {
-                        createOrUpdateCursor(message.user);
-                    }
+                    if (message.user.id !== localUser.id) createOrUpdateCursor(message.user);
                     break;
                 case 'user-left':
                     removeCursor(message.id);
@@ -159,7 +172,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ws.onerror = (error) => console.error('[Client] WebSocket error:', error);
     }
     
-    // --- CURSOR LOGIC ---
+    // =========================================================================
+    // 5. CURSOR LOGIC
+    // =========================================================================
     function createOrUpdateCursor(user) {
         let cursorEl = document.getElementById(`cursor-${user.id}`);
         if (!cursorEl) {
@@ -175,7 +190,6 @@ document.addEventListener('DOMContentLoaded', () => {
             cursorsContainer.appendChild(cursorEl);
         }
         
-        // Update position
         if (user.x && user.y) {
             cursorEl.style.transform = `translate(${user.x}px, ${user.y}px)`;
         }
@@ -185,28 +199,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function removeCursor(userId) {
         const cursorEl = document.getElementById(`cursor-${userId}`);
-        if (cursorEl) {
-            cursorEl.remove();
-        }
+        if (cursorEl) cursorEl.remove();
         otherUsers.delete(userId);
     }
 
-    // Throttle cursor movement updates to prevent flooding the server
     let lastCursorSendTime = 0;
     document.addEventListener('mousemove', (e) => {
         const now = Date.now();
-        if (ws && ws.readyState === WebSocket.OPEN && now - lastCursorSendTime > 50) { // Send every 50ms max
+        if (ws && ws.readyState === WebSocket.OPEN && now - lastCursorSendTime > 50) {
             ws.send(JSON.stringify({
                 type: 'cursor-move',
                 payload: { x: e.clientX, y: e.clientY }
             }));
             lastCursorSendTime = now;
         }
-        // Also move local user's own cursor
         createOrUpdateCursor({ ...localUser, x: e.clientX, y: e.clientY });
     });
 
-    // --- DRAWING LOGIC ---
+    // =========================================================================
+    // 6. DRAWING LOGIC
+    // =========================================================================
     function sendDrawData(x0, y0, x1, y1) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -235,8 +247,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!isDrawing) return;
         const [currentX, currentY] = [e.offsetX, e.offsetY];
         const data = { x0: lastX, y0: lastY, x1: currentX, y1: currentY, color: drawingState.color, lineWidth: drawingState.lineWidth };
-        drawOnCanvas(data); // Draw locally immediately
-        sendDrawData(lastX, lastY, currentX, currentY); // Send to others
+        drawOnCanvas(data);
+        sendDrawData(lastX, lastY, currentX, currentY);
         [lastX, lastY] = [currentX, currentY];
     }
 
@@ -246,7 +258,9 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('mouseup', stopDrawing);
     canvas.addEventListener('mouseout', stopDrawing);
 
-    // --- UI EVENT HANDLERS ---
+    // =========================================================================
+    // 7. UI EVENT HANDLERS
+    // =========================================================================
     usernameForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const username = usernameInput.value.trim();
@@ -260,36 +274,35 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function updateActiveSwatch(activeElement) {
-        document.querySelectorAll('.color-swatch').forEach(swatch => swatch.classList.remove('ring-2', 'ring-indigo-500', 'ring-offset-2'));
+        colorSwatches.forEach(swatch => swatch.classList.remove('ring-2', 'ring-indigo-500', 'ring-offset-2'));
         if (activeElement) {
             activeElement.classList.add('ring-2', 'ring-indigo-500', 'ring-offset-2');
             eraserBtn.classList.remove('bg-gray-200');
         }
     }
     
-    document.querySelectorAll('.color-swatch').forEach(swatch => {
+    colorSwatches.forEach(swatch => {
         swatch.addEventListener('click', () => {
             drawingState.color = swatch.dataset.color;
             updateActiveSwatch(swatch);
         });
     });
 
-    document.getElementById('color-picker').addEventListener('input', (e) => {
+    colorPicker.addEventListener('input', (e) => {
         drawingState.color = e.target.value;
         updateActiveSwatch(null);
     });
     
-    document.getElementById('thickness-slider').addEventListener('input', (e) => {
+    thicknessSlider.addEventListener('input', (e) => {
         drawingState.lineWidth = e.target.value;
     });
 
-    document.getElementById('eraser-btn').addEventListener('click', () => {
+    eraserBtn.addEventListener('click', () => {
         drawingState.color = canvasBackgroundColor;
         updateActiveSwatch(null);
         eraserBtn.classList.add('bg-gray-200');
     });
 });
 </script>
-
 </body>
 </html>
