@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/uuid/8.3.2/uuid.min.js" integrity="sha512-D2EDXohO_GkCXcefNYrAZKj0TJ6ZWvE0vrjV9M6o+0MBdLaxO2HKb1gBvjCifb2vb8sL_3IeLoKKnP29U0FAlA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style type="text/tailwindcss">
         body {
             font-family: 'Poppins', sans-serif;
@@ -32,10 +33,9 @@
                 @apply w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-400;
             }
         }
-        /* Crayon/Marker cursor style */
-        .drawing-cursor {
-            cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='4'/></svg>") 12 12, auto;
-        }
+        /* Cursors */
+        .drawing-cursor { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='black' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='4'/></svg>") 12 12, auto; }
+        .eraser-cursor { cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/></svg>") 12 12, auto; }
         .panning-cursor { cursor: grab; }
         .panning-cursor:active { cursor: grabbing; }
 
@@ -52,7 +52,7 @@
 
     <div id="app-container" class="w-screen h-screen">
 
-        <div id="modal-username" class="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 fade-in">
+        <div id="modal-username" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 fade-in">
             <div class="card w-full max-w-sm p-8 text-center">
                 <h1 class="text-2xl font-bold text-gray-800 mb-2">Welcome to Drawlima</h1>
                 <p class="text-gray-500 mb-6">Choose a username to start collaborating.</p>
@@ -73,6 +73,7 @@
                     </div>
             </div>
         </div>
+        
         <div id="modal-create-whiteboard" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50">
             <div class="card w-full max-w-sm p-8">
                 <h2 class="text-xl font-bold mb-4">Create a New Whiteboard</h2>
@@ -129,66 +130,63 @@
         </div>
     </div>
 
-    <script>
+<script>
     document.addEventListener('DOMContentLoaded', () => {
 
         // --- CONFIGURATION ---
-        // IMPORTANT: Change this to your VPS's domain and port.
-        // Use wss:// for secure connections (required for https sites).
         const WS_URL = 'wss://miaou.vps.webdock.cloud/drawlima/';
 
         // --- STATE MANAGEMENT ---
         let ws;
-        let userId = null;
+        let userId = null; // Our persistent ID
         let username = null;
         let currentRoomId = null;
-        let localStrokes = []; // Holds all strokes for the current room
-        let userCursors = new Map(); // { userId -> { element, color, username } }
         let otherUsersInRoom = new Map(); // { userId -> { username } }
-
+        let userCursors = new Map(); // { userId -> { element, color, username } }
+        
         // Drawing state
-        let isDrawing = false;
-        let isPanning = false;
-        let lastX = 0;
-        let lastY = 0;
-        let currentStroke = null;
-        let tool = 'brush'; // 'brush' or 'eraser'
+        let committedStrokes = []; // Strokes that are finished
+        let activeStrokes = new Map(); // Strokes currently being drawn {strokeId -> strokeObject}
+
+        // Local user's drawing/panning state
+        let localAction = {
+            isDrawing: false,
+            isPanning: false,
+            isErasing: false,
+            currentStrokeId: null,
+            panStart: { x: 0, y: 0 },
+            touchStartDist: 0,
+            lastSentCursorTime: 0
+        };
+        
+        let tool = 'brush';
         let drawingConfig = {
             color: '#EF4444',
             thickness: 5,
-            eraserColor: '#F8F9FA'
         };
         
-        // Panning and Zooming state
+        // Viewport (camera) state
         let viewport = {
-            panX: 0,
-            panY: 0,
-            zoom: 1,
-            worldWidth: 3000,
-            worldHeight: 3000
+            panX: 0, panY: 0, zoom: 1,
+            worldWidth: 3000, worldHeight: 3000
         };
-        let panStart = { x: 0, y: 0 };
-        let touchStartDist = 0;
 
         // --- DOM ELEMENTS ---
         const usernameModal = document.getElementById('modal-username');
         const usernameForm = document.getElementById('form-username');
         const usernameInput = document.getElementById('input-username');
-        
         const lobbyView = document.getElementById('view-lobby');
         const whiteboardListEl = document.getElementById('whiteboard-list');
         const createNewBtn = document.getElementById('btn-create-new');
         const createModal = document.getElementById('modal-create-whiteboard');
         const createForm = document.getElementById('form-create-whiteboard');
         const cancelCreateBtn = document.getElementById('btn-cancel-create');
-
         const whiteboardView = document.getElementById('view-whiteboard');
         const canvas = document.getElementById('whiteboard-canvas');
         const ctx = canvas.getContext('2d');
         const cursorsContainer = document.getElementById('cursors-container');
         const userListOverlay = document.getElementById('user-list-overlay');
         const userListContent = document.getElementById('user-list-content');
-
         const toolbar = document.getElementById('toolbar');
         const colorBtns = document.querySelectorAll('.color-btn');
         const moreColorsBtn = document.getElementById('btn-more-colors');
@@ -198,64 +196,70 @@
         const eraserToolBtn = document.getElementById('tool-eraser');
         const backToLobbyBtn = document.getElementById('btn-back-to-lobby');
 
-        // --- INITIALIZATION ---
+        // --- INITIALIZATION V2 ---
         function init() {
-            // Setup initial event listeners
+            // Attempt to retrieve persistent session
+            const savedUserId = localStorage.getItem('drawlima_userId');
+            const savedUsername = localStorage.getItem('drawlima_username');
+
+            if (savedUserId && savedUsername) {
+                // If we have a saved session, authenticate with it
+                handleAuthentication(savedUsername, savedUserId);
+            } else {
+                // Otherwise, show the modal to create a new user
+                usernameModal.classList.remove('hidden');
+            }
+            
             usernameForm.addEventListener('submit', handleUsernameSubmit);
             createNewBtn.addEventListener('click', () => createModal.classList.remove('hidden'));
             cancelCreateBtn.addEventListener('click', () => createModal.classList.add('hidden'));
             createForm.addEventListener('submit', handleCreateRoom);
             backToLobbyBtn.addEventListener('click', handleLeaveRoom);
+            window.addEventListener('resize', resizeCanvas);
 
             setupToolbar();
             setupCanvasEvents();
         }
 
-        // --- VIEW MANAGEMENT ---
-        function showView(view) {
-            usernameModal.classList.add('hidden');
-            lobbyView.classList.add('hidden');
-            whiteboardView.classList.add('hidden');
-            if (view === 'lobby') lobbyView.classList.remove('hidden');
-            if (view === 'whiteboard') whiteboardView.classList.remove('hidden');
-        }
-
-        // --- USER & WEBSOCKET FLOW ---
+        // --- AUTH & WEBSOCKET FLOW ---
 
         function handleUsernameSubmit(e) {
             e.preventDefault();
-            username = usernameInput.value.trim();
-            if (username) {
-                usernameModal.classList.add('fade-out');
-                setTimeout(() => usernameModal.classList.add('hidden'), 500);
-                connectWebSocket();
+            const name = usernameInput.value.trim();
+            if (name) {
+                handleAuthentication(name);
             }
         }
 
+        function handleAuthentication(name, token = null) {
+            username = name;
+            userId = token; // Can be null for a new user
+            usernameModal.classList.add('fade-out');
+            setTimeout(() => usernameModal.classList.add('hidden'), 500);
+            connectWebSocket();
+        }
+
         function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) return;
             ws = new WebSocket(WS_URL);
 
             ws.onopen = () => {
-                console.log('WebSocket connected.');
-                // Send username for authentication
-                sendMessage('auth', { username });
+                sendMessage('auth', { 
+                    username: username,
+                    token: userId // Send our ID/token for reconnection
+                });
             };
 
-            ws.onmessage = (event) => {
-                const message = JSON.parse(event.data);
+            ws.onmessage = ({ data }) => {
+                const message = JSON.parse(data);
                 handleWebSocketMessage(message);
             };
 
             ws.onclose = () => {
-                console.log('WebSocket disconnected. Attempting to reconnect...');
-                // You might want to show a "disconnected" message to the user here.
-                setTimeout(connectWebSocket, 3000); // Reconnect after 3 seconds
+                console.warn('WebSocket disconnected. Attempting to reconnect in 3s...');
+                setTimeout(connectWebSocket, 3000);
             };
-
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                ws.close();
-            };
+            ws.onerror = (error) => console.error('WebSocket error:', error);
         }
 
         function sendMessage(type, payload) {
@@ -265,10 +269,11 @@
         }
         
         function handleWebSocketMessage({ type, payload }) {
-            // console.log('Received message:', type, payload);
             switch (type) {
                 case 'authenticated':
                     userId = payload.userId;
+                    localStorage.setItem('drawlima_userId', userId);
+                    localStorage.setItem('drawlima_username', username);
                     updateWhiteboardList(payload.whiteboards);
                     showView('lobby');
                     break;
@@ -279,7 +284,8 @@
                     currentRoomId = payload.roomId;
                     viewport.worldWidth = payload.size.width;
                     viewport.worldHeight = payload.size.height;
-                    localStrokes = payload.strokes;
+                    committedStrokes = payload.strokes;
+                    activeStrokes = new Map(payload.activeStrokes.map(s => [s.id, s]));
                     otherUsersInRoom.clear();
                     payload.users.forEach(u => {
                         if (u.id !== userId) otherUsersInRoom.set(u.id, u);
@@ -298,12 +304,28 @@
                     removeCursor(payload.userId);
                     updateUserList();
                     break;
-                case 'new_stroke':
-                    localStrokes.push(payload);
-                    drawStroke(payload);
+                case 'start_stroke':
+                    activeStrokes.set(payload.id, payload);
+                    redrawCanvas();
+                    break;
+                case 'draw_chunk':
+                    const strokeToUpdate = activeStrokes.get(payload.strokeId);
+                    if (strokeToUpdate) {
+                        const lastPointIndex = strokeToUpdate.points.length - 1;
+                        strokeToUpdate.points.push(payload.point);
+                        drawStrokeSegment(strokeToUpdate, lastPointIndex);
+                    }
+                    break;
+                case 'end_stroke':
+                    const finishedStroke = activeStrokes.get(payload.strokeId);
+                    if (finishedStroke) {
+                        committedStrokes.push(finishedStroke);
+                        activeStrokes.delete(payload.strokeId);
+                        redrawCanvas();
+                    }
                     break;
                 case 'stroke_deleted':
-                    localStrokes = localStrokes.filter(s => s.id !== payload.strokeId);
+                    committedStrokes = committedStrokes.filter(s => s.id !== payload.strokeId);
                     redrawCanvas();
                     break;
                 case 'cursor_update':
@@ -312,64 +334,21 @@
             }
         }
         
-        // --- LOBBY LOGIC ---
+        // --- VIEW & ROOM MANAGEMENT ---
         
-        function updateWhiteboardList(whiteboards) {
-            whiteboardListEl.innerHTML = '';
-            if (whiteboards.length === 0) {
-                 whiteboardListEl.innerHTML = `<p class="text-gray-500 col-span-full text-center">No whiteboards yet. Why not create one?</p>`;
-            } else {
-                whiteboards.forEach(room => {
-                    const card = document.createElement('div');
-                    card.className = 'card p-4 flex flex-col justify-between hover:shadow-xl cursor-pointer';
-                    card.dataset.roomId = room.id;
-                    card.innerHTML = `
-                        <div>
-                            <h3 class="font-bold text-lg truncate">${room.name}</h3>
-                            <p class="text-sm text-gray-500">by ${room.creator}</p>
-                        </div>
-                        <div class="mt-4 text-sm text-gray-600 flex justify-between items-center">
-                            <span>${room.userCount} user(s) online</span>
-                            <span>${new Date(room.createdAt).toLocaleDateString()}</span>
-                        </div>
-                    `;
-                    card.addEventListener('click', () => {
-                        sendMessage('join_room', { roomId: room.id });
-                    });
-                    whiteboardListEl.appendChild(card);
-                });
-            }
-        }
+        function showView(view) { /* ... same as before ... */ }
+        function updateWhiteboardList(whiteboards) { /* ... same as before ... */ }
+        function handleCreateRoom(e) { /* ... same as before ... */ }
+        function handleLeaveRoom() { /* ... same as before ... */ }
 
-        function handleCreateRoom(e) {
-            e.preventDefault();
-            const name = document.getElementById('input-whiteboard-name').value;
-            const sizeValue = document.getElementById('select-whiteboard-size').value;
-            const [width, height] = sizeValue.split('x').map(Number);
-            
-            if (name) {
-                sendMessage('create_room', { name, size: {width, height} });
-                createModal.classList.add('hidden');
-                createForm.reset();
-            }
-        }
-        
-        function handleLeaveRoom() {
-            showView('lobby');
-            currentRoomId = null;
-            localStrokes = [];
-            // Inform server we left (implicitly handled by joining another room or disconnecting)
-            // but for a clean UI transition, we do this client-side first.
-        }
-
-        // --- WHITEBOARD & CANVAS LOGIC ---
+        // --- CANVAS & DRAWING LOGIC (V2) ---
         
         function setupWhiteboard() {
             resizeCanvas();
             resetViewport();
             redrawCanvas();
             updateUserList();
-            document.body.classList.add('drawing-cursor');
+            setCursor(tool);
         }
 
         function resizeCanvas() {
@@ -383,132 +362,137 @@
             viewport.panY = (canvas.height / 2) - (viewport.worldHeight / 2 * viewport.zoom);
         }
 
-        window.addEventListener('resize', resizeCanvas);
-
         function setupCanvasEvents() {
-            // Mouse events
-            canvas.addEventListener('mousedown', startDrawing);
-            canvas.addEventListener('mousemove', draw);
-            canvas.addEventListener('mouseup', stopDrawing);
-            canvas.addEventListener('mouseout', stopDrawing);
+            canvas.addEventListener('mousedown', startAction);
+            canvas.addEventListener('mousemove', moveAction);
+            canvas.addEventListener('mouseup', endAction);
+            canvas.addEventListener('mouseout', endAction);
             canvas.addEventListener('wheel', handleZoom, { passive: false });
-
-            // Touch events for mobile
             canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
             canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
             canvas.addEventListener('touchend', handleTouchEnd);
         }
         
-        // --- Drawing ---
-        function startDrawing(e) {
+        function startAction(e) {
             if (e.button === 2) { // Right click for panning
-                isPanning = true;
-                panStart.x = e.clientX;
-                panStart.y = e.clientY;
-                document.body.classList.remove('drawing-cursor');
-                document.body.classList.add('panning-cursor');
+                localAction.isPanning = true;
+                localAction.panStart = { x: e.clientX, y: e.clientY };
+                setCursor('panning');
                 return;
             }
-            if (e.button !== 0) return; // Only left click draws
+            if (e.button !== 0) return; // Only left click for drawing/erasing
             
-            isDrawing = true;
-            const [x, y] = getCanvasCoords(e);
-            const [worldX, worldY] = screenToWorld(x, y);
+            const [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
 
-            currentStroke = {
-                tool: tool,
-                color: tool === 'eraser' ? drawingConfig.eraserColor : drawingConfig.color,
-                thickness: drawingConfig.thickness,
-                points: [{ x: worldX, y: worldY }]
-            };
-            
-            ctx.beginPath();
-            ctx.moveTo(x, y);
+            if (tool === 'eraser') {
+                localAction.isErasing = true;
+                eraseAtPoint(worldX, worldY);
+            } else { // 'brush'
+                localAction.isDrawing = true;
+                localAction.currentStrokeId = uuid.v4(); // Generate client-side UUID
+                
+                const newStroke = {
+                    id: localAction.currentStrokeId,
+                    userId: userId,
+                    tool: 'brush',
+                    color: drawingConfig.color,
+                    thickness: drawingConfig.thickness,
+                    points: [{x: worldX, y: worldY}]
+                };
+
+                activeStrokes.set(localAction.currentStrokeId, newStroke);
+                sendMessage('start_stroke', newStroke);
+                redrawCanvas();
+            }
         }
 
-        function draw(e) {
-            if (isPanning) {
-                const dx = e.clientX - panStart.x;
-                const dy = e.clientY - panStart.y;
+        function moveAction(e) {
+            if (localAction.isPanning) {
+                const dx = e.clientX - localAction.panStart.x;
+                const dy = e.clientY - localAction.panStart.y;
                 viewport.panX += dx;
                 viewport.panY += dy;
-                panStart.x = e.clientX;
-                panStart.y = e.clientY;
+                localAction.panStart = { x: e.clientX, y: e.clientY };
                 redrawCanvas();
                 return;
             }
 
-            if (!isDrawing) {
-                // Send cursor position even when not drawing
-                const [x,y] = getCanvasCoords(e);
-                const [worldX, worldY] = screenToWorld(x,y);
-                sendMessage('cursor_move', { x: worldX, y: worldY, color: drawingConfig.color });
-                return;
-            }
-            
-            const [x, y] = getCanvasCoords(e);
-            const [worldX, worldY] = screenToWorld(x, y);
-            
-            currentStroke.points.push({ x: worldX, y: worldY });
-            
-            ctx.lineWidth = drawingConfig.thickness * viewport.zoom;
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = tool === 'eraser' ? drawingConfig.eraserColor : drawingConfig.color;
-            
-            // For that "crayon" texture
-            ctx.globalAlpha = 0.8;
-            ctx.lineTo(x, y);
-            ctx.stroke();
-            ctx.globalAlpha = 1.0;
-        }
+            const [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
 
-        function stopDrawing(e) {
-            if (isPanning) {
-                isPanning = false;
-                document.body.classList.remove('panning-cursor');
-                document.body.classList.add('drawing-cursor');
+            // Throttle cursor updates
+            const now = Date.now();
+            if (now - localAction.lastSentCursorTime > 50) { // Send every 50ms
+                 sendMessage('cursor_move', { x: worldX, y: worldY, color: drawingConfig.color });
+                 localAction.lastSentCursorTime = now;
             }
 
-            if (isDrawing) {
-                isDrawing = false;
-                ctx.closePath();
-                if (currentStroke && currentStroke.points.length > 1) {
-                    localStrokes.push(currentStroke);
-                    sendMessage('draw_stroke', currentStroke);
+            if (!localAction.isDrawing && !localAction.isErasing) return;
+            
+            if (localAction.isDrawing) {
+                const current = activeStrokes.get(localAction.currentStrokeId);
+                if (current) {
+                    const newPoint = {x: worldX, y: worldY};
+                    current.points.push(newPoint);
+                    sendMessage('draw_chunk', { strokeId: localAction.currentStrokeId, point: newPoint });
+                    drawStrokeSegment(current, current.points.length - 2);
                 }
-                currentStroke = null;
+            } else if (localAction.isErasing) {
+                eraseAtPoint(worldX, worldY);
             }
         }
         
-        function drawStroke(stroke) {
-            if (!stroke || stroke.points.length < 2) return;
-
-            ctx.beginPath();
-            const startPoint = worldToScreen(stroke.points[0].x, stroke.points[0].y);
-            ctx.moveTo(startPoint[0], startPoint[1]);
-            
-            ctx.lineWidth = stroke.thickness * viewport.zoom;
-            ctx.strokeStyle = stroke.color;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-
-            for (let i = 1; i < stroke.points.length; i++) {
-                const point = worldToScreen(stroke.points[i].x, stroke.points[i].y);
-                ctx.lineTo(point[0], point[1]);
+        function endAction(e) {
+            if (localAction.isPanning) {
+                localAction.isPanning = false;
+                setCursor(tool);
             }
-            ctx.stroke();
-            ctx.closePath();
+
+            if (localAction.isDrawing) {
+                const finishedStroke = activeStrokes.get(localAction.currentStrokeId);
+                if (finishedStroke) {
+                    sendMessage('end_stroke', { strokeId: localAction.currentStrokeId });
+                    committedStrokes.push(finishedStroke);
+                    activeStrokes.delete(localAction.currentStrokeId);
+                }
+            }
+
+            localAction.isDrawing = false;
+            localAction.isErasing = false;
+            localAction.currentStrokeId = null;
         }
+        
+        function eraseAtPoint(x, y) {
+            const eraserRadius = 10; // In world pixels
+            let needsRedraw = false;
+            
+            for (let i = committedStrokes.length - 1; i >= 0; i--) {
+                const stroke = committedStrokes[i];
+                if (stroke.userId !== userId) continue; // Can only erase your own strokes
+
+                for (const point of stroke.points) {
+                    const distance = Math.hypot(point.x - x, point.y - y);
+                    if (distance < eraserRadius / viewport.zoom) { // Adjust radius for zoom
+                        sendMessage('delete_stroke', { strokeId: stroke.id });
+                        committedStrokes.splice(i, 1);
+                        needsRedraw = true;
+                        break; 
+                    }
+                }
+            }
+            if (needsRedraw) {
+                redrawCanvas();
+            }
+        }
+
+        // --- DRAWING & RENDERING ---
 
         function redrawCanvas() {
             if (!currentRoomId) return;
-            // Clear canvas
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             ctx.restore();
 
-            // Draw background / world boundary
             const [tlx, tly] = worldToScreen(0, 0);
             const [brx, bry] = worldToScreen(viewport.worldWidth, viewport.worldHeight);
             ctx.fillStyle = '#FFFFFF';
@@ -516,170 +500,116 @@
             ctx.strokeStyle = '#E5E7EB';
             ctx.strokeRect(tlx, tly, brx - tlx, bry - tly);
 
-            // Draw all strokes
-            localStrokes.forEach(drawStroke);
+            committedStrokes.forEach(drawFullStroke);
+            activeStrokes.forEach(drawFullStroke);
         }
 
-        // --- Panning & Zooming ---
-        function handleZoom(e) {
-            e.preventDefault();
-            const zoomAmount = e.deltaY * -0.001;
-            const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * (1 + zoomAmount)));
-            
-            const mouseX = e.clientX;
-            const mouseY = e.clientY;
-
-            const worldX = (mouseX - viewport.panX) / viewport.zoom;
-            const worldY = (mouseY - viewport.panY) / viewport.zoom;
-            
-            viewport.panX = mouseX - worldX * newZoom;
-            viewport.panY = mouseY - worldY * newZoom;
-            viewport.zoom = newZoom;
-            
-            redrawCanvas();
-        }
-        
-        function getCanvasCoords(e) {
-            return [e.clientX, e.clientY];
-        }
-
-        function screenToWorld(x, y) {
-            return [(x - viewport.panX) / viewport.zoom, (y - viewport.panY) / viewport.zoom];
-        }
-
-        function worldToScreen(x, y) {
-            return [x * viewport.zoom + viewport.panX, y * viewport.zoom + viewport.panY];
-        }
-
-        // --- Touch controls ---
-        function handleTouchStart(e) {
-            e.preventDefault();
-            if (e.touches.length === 1) { // Single finger for drawing
-                startDrawing({ button: 0, clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
-            } else if (e.touches.length === 2) { // Two fingers for panning/zooming
-                isDrawing = false;
-                isPanning = true;
-                panStart.x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-                panStart.y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                touchStartDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+        function drawFullStroke(stroke) {
+            if (!stroke || stroke.points.length < 1) return;
+            ctx.beginPath();
+            const startPoint = worldToScreen(stroke.points[0].x, stroke.points[0].y);
+            ctx.moveTo(startPoint[0], startPoint[1]);
+            ctx.lineWidth = stroke.thickness * viewport.zoom;
+            ctx.strokeStyle = stroke.color;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            for (let i = 1; i < stroke.points.length; i++) {
+                const point = worldToScreen(stroke.points[i].x, stroke.points[i].y);
+                ctx.lineTo(point[0], point[1]);
             }
+            ctx.stroke();
         }
 
-        function handleTouchMove(e) {
-            e.preventDefault();
-            if (e.touches.length === 1 && isDrawing) {
-                draw({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
-            } else if (e.touches.length === 2 && isPanning) {
-                // Panning
-                const panNow = {
-                    x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
-                    y: (e.touches[0].clientY + e.touches[1].clientY) / 2
-                };
-                const dx = panNow.x - panStart.x;
-                const dy = panNow.y - panStart.y;
-                viewport.panX += dx;
-                viewport.panY += dy;
-                panStart.x = panNow.x;
-                panStart.y = panNow.y;
-
-                // Zooming
-                const touchNowDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-                const zoomFactor = touchNowDist / touchStartDist;
-                
-                const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * zoomFactor));
-                const worldX = (panNow.x - viewport.panX) / viewport.zoom;
-                const worldY = (panNow.y - viewport.panY) / viewport.zoom;
-                
-                viewport.panX = panNow.x - worldX * newZoom;
-                viewport.panY = panNow.y - worldY * newZoom;
-                viewport.zoom = newZoom;
-
-                touchStartDist = touchNowDist;
-                
-                redrawCanvas();
-            }
+        function drawStrokeSegment(stroke, fromIndex) {
+            if (fromIndex < 0 || fromIndex >= stroke.points.length - 1) return;
+            ctx.beginPath();
+            const fromPoint = worldToScreen(stroke.points[fromIndex].x, stroke.points[fromIndex].y);
+            const toPoint = worldToScreen(stroke.points[fromIndex + 1].x, stroke.points[fromIndex + 1].y);
+            ctx.moveTo(fromPoint[0], fromPoint[1]);
+            ctx.lineTo(toPoint[0], toPoint[1]);
+            ctx.lineWidth = stroke.thickness * viewport.zoom;
+            ctx.strokeStyle = stroke.color;
+            ctx.lineCap = 'round';
+            ctx.stroke();
         }
 
-        function handleTouchEnd(e) {
-            e.preventDefault();
-            stopDrawing();
-            isPanning = false;
-        }
+        // --- TOUCH & ZOOM ---
+        function handleZoom(e) { /* ... same as before ... */ }
+        function handleTouchStart(e) { /* ... same as before, calling startAction/panning logic ... */ }
+        function handleTouchMove(e) { /* ... same as before, calling moveAction/panning logic ... */ }
+        function handleTouchEnd(e) { /* ... same as before, calling endAction ... */ }
 
-        // --- Toolbar ---
-        function setupToolbar() {
-            colorBtns.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    colorBtns.forEach(b => b.style.borderColor = 'transparent');
-                    btn.style.borderColor = '#3B82F6'; // a highlight color
-                    drawingConfig.color = btn.dataset.color;
-                    setTool('brush');
-                });
-            });
-            
-            moreColorsBtn.addEventListener('click', () => nativeColorPicker.click());
-            nativeColorPicker.addEventListener('input', (e) => {
-                drawingConfig.color = e.target.value;
-                setTool('brush');
-            });
-
-            thicknessSlider.addEventListener('input', (e) => {
-                drawingConfig.thickness = e.target.value;
-            });
-            
-            brushToolBtn.addEventListener('click', () => setTool('brush'));
-            eraserToolBtn.addEventListener('click', () => setTool('eraser'));
-        }
-
+        // --- UI & HELPERS ---
+        function setupToolbar() { /* ... same as before, but calls setTool ... */ }
         function setTool(newTool) {
             tool = newTool;
             brushToolBtn.classList.toggle('bg-blue-100', tool === 'brush');
             brushToolBtn.classList.toggle('text-blue-600', tool === 'brush');
             eraserToolBtn.classList.toggle('bg-blue-100', tool === 'eraser');
             eraserToolBtn.classList.toggle('text-blue-600', tool === 'eraser');
+            setCursor(tool);
         }
-
-        // --- Cursors & User List ---
-        function updateCursor({ userId, username, x, y, color }) {
-            if (!userCursors.has(userId)) {
-                const cursorEl = document.createElement('div');
-                cursorEl.className = 'absolute transition-transform duration-100 ease-linear';
-                cursorEl.innerHTML = `
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="transform -rotate-45"><path d="M21.19,2.81,2.81,21.19a2,2,0,0,1-2.83-2.83L18.36,1.64a2,2,0,0,1,2.83,2.83Z"/></svg>
-                    <span class="absolute top-5 left-2 px-2 py-0.5 text-xs text-white rounded-full" style="background-color: ${color};">${username}</span>
-                `;
-                cursorsContainer.appendChild(cursorEl);
-                userCursors.set(userId, { element: cursorEl, color, username });
-            }
-
-            const cursor = userCursors.get(userId);
-            const [screenX, screenY] = worldToScreen(x, y);
-            cursor.element.style.transform = `translate(${screenX}px, ${screenY}px)`;
-            
-            // Update color if it has changed
-            if(cursor.color !== color) {
-                cursor.color = color;
-                cursor.element.querySelector('svg').style.fill = color;
-                cursor.element.querySelector('span').style.backgroundColor = color;
-            }
+        function setCursor(cursorType) {
+            canvas.classList.remove('drawing-cursor', 'eraser-cursor', 'panning-cursor');
+            if (cursorType === 'brush') canvas.classList.add('drawing-cursor');
+            if (cursorType === 'eraser') canvas.classList.add('eraser-cursor');
+            if (cursorType === 'panning') canvas.classList.add('panning-cursor');
         }
+        function screenToWorld(x, y) { return [(x - viewport.panX) / viewport.zoom, (y - viewport.panY) / viewport.zoom]; }
+        function worldToScreen(x, y) { return [x * viewport.zoom + viewport.panX, y * viewport.zoom + viewport.panY]; }
+        function updateCursor(payload) { /* ... same as before ... */ }
+        function removeCursor(userId) { /* ... same as before ... */ }
+        function updateUserList() { /* ... same as before ... */ }
         
-        function removeCursor(userId) {
-            if (userCursors.has(userId)) {
-                userCursors.get(userId).element.remove();
-                userCursors.delete(userId);
+        // --- Initialize App ---
+        init();
+        
+        // --- HELPER IMPLEMENTATIONS (for completeness) ---
+        function showView(view) {
+            usernameModal.classList.add('hidden');
+            lobbyView.classList.add('hidden');
+            whiteboardView.classList.add('hidden');
+            if (view === 'lobby') lobbyView.classList.remove('hidden');
+            if (view === 'whiteboard') whiteboardView.classList.remove('hidden');
+        }
+        function updateWhiteboardList(whiteboards) {
+            whiteboardListEl.innerHTML = '';
+            if (!whiteboards || whiteboards.length === 0) {
+                 whiteboardListEl.innerHTML = `<p class="text-gray-500 col-span-full text-center">No whiteboards yet. Why not create one?</p>`;
+            } else {
+                whiteboards.forEach(room => {
+                    const card = document.createElement('div');
+                    card.className = 'card p-4 flex flex-col justify-between hover:shadow-xl cursor-pointer';
+                    card.dataset.roomId = room.id;
+                    card.innerHTML = `<div><h3 class="font-bold text-lg truncate">${room.name}</h3><p class="text-sm text-gray-500">by ${room.creator}</p></div><div class="mt-4 text-sm text-gray-600 flex justify-between items-center"><span>${room.userCount} user(s) online</span><span>${new Date(room.createdAt).toLocaleDateString()}</span></div>`;
+                    card.addEventListener('click', () => sendMessage('join_room', { roomId: room.id }));
+                    whiteboardListEl.appendChild(card);
+                });
             }
         }
-        
+        function handleCreateRoom(e) {
+            e.preventDefault();
+            const name = document.getElementById('input-whiteboard-name').value;
+            const sizeValue = document.getElementById('select-whiteboard-size').value;
+            const [width, height] = sizeValue.split('x').map(Number);
+            if (name) {
+                sendMessage('create_room', { name, size: {width, height} });
+                createModal.classList.add('hidden');
+                createForm.reset();
+            }
+        }
+        function handleLeaveRoom() {
+            // This would ideally inform the server we are leaving the room
+            // but for now, just switch view. The server will handle it on disconnect/rejoin.
+            showView('lobby');
+            currentRoomId = null;
+        }
         function updateUserList() {
             userListContent.innerHTML = '';
-            // Add self
             const selfEl = document.createElement('div');
             selfEl.className = 'text-sm font-semibold';
             selfEl.textContent = `${username} (You)`;
             userListContent.appendChild(selfEl);
-
-            // Add others
             otherUsersInRoom.forEach(user => {
                  const userEl = document.createElement('div');
                  userEl.className = 'text-sm text-gray-600';
@@ -687,10 +617,106 @@
                  userListContent.appendChild(userEl);
             });
         }
-
-        // --- Start the app ---
-        init();
+        function setupToolbar() {
+            colorBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    colorBtns.forEach(b => b.style.borderColor = 'transparent');
+                    btn.style.borderColor = '#3B82F6';
+                    drawingConfig.color = btn.dataset.color;
+                    setTool('brush');
+                });
+            });
+            moreColorsBtn.addEventListener('click', () => nativeColorPicker.click());
+            nativeColorPicker.addEventListener('input', (e) => {
+                drawingConfig.color = e.target.value;
+                setTool('brush');
+            });
+            thicknessSlider.addEventListener('input', (e) => drawingConfig.thickness = e.target.value);
+            brushToolBtn.addEventListener('click', () => setTool('brush'));
+            eraserToolBtn.addEventListener('click', () => setTool('eraser'));
+        }
+        function updateCursor({ userId, username, x, y, color }) {
+            if (!userCursors.has(userId)) {
+                const cursorEl = document.createElement('div');
+                cursorEl.className = 'absolute transition-transform duration-100 ease-linear';
+                cursorEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="transform -rotate-45"><path d="M21.19,2.81,2.81,21.19a2,2,0,0,1-2.83-2.83L18.36,1.64a2,2,0,0,1,2.83,2.83Z"/></svg><span class="absolute top-5 left-2 px-2 py-0.5 text-xs text-white rounded-full" style="background-color: ${color};">${username}</span>`;
+                cursorsContainer.appendChild(cursorEl);
+                userCursors.set(userId, { element: cursorEl, color, username });
+            }
+            const cursor = userCursors.get(userId);
+            const [screenX, screenY] = worldToScreen(x, y);
+            cursor.element.style.transform = `translate(${screenX}px, ${screenY}px)`;
+            if(cursor.color !== color) {
+                cursor.color = color;
+                cursor.element.querySelector('svg').style.fill = color;
+                cursor.element.querySelector('span').style.backgroundColor = color;
+            }
+        }
+        function removeCursor(userId) {
+            if (userCursors.has(userId)) {
+                userCursors.get(userId).element.remove();
+                userCursors.delete(userId);
+            }
+        }
+        function handleZoom(e) {
+            e.preventDefault();
+            const zoomAmount = e.deltaY * -0.001;
+            const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * (1 + zoomAmount)));
+            const mouseX = e.clientX;
+            const mouseY = e.clientY;
+            const worldX = (mouseX - viewport.panX) / viewport.zoom;
+            const worldY = (mouseY - viewport.panY) / viewport.zoom;
+            viewport.panX = mouseX - worldX * newZoom;
+            viewport.panY = mouseY - worldY * newZoom;
+            viewport.zoom = newZoom;
+            redrawCanvas();
+        }
+        function handleTouchStart(e) {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                startAction({ button: 0, clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+            } else if (e.touches.length === 2) {
+                localAction.isDrawing = false;
+                localAction.isErasing = false;
+                localAction.isPanning = true;
+                localAction.panStart = { x: (e.touches[0].clientX + e.touches[1].clientX) / 2, y: (e.touches[0].clientY + e.touches[1].clientY) / 2 };
+                localAction.touchStartDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                setCursor('panning');
+            }
+        }
+        function handleTouchMove(e) {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                moveAction({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+            } else if (e.touches.length === 2 && localAction.isPanning) {
+                const panNow = { x: (e.touches[0].clientX + e.touches[1].clientX) / 2, y: (e.touches[0].clientY + e.touches[1].clientY) / 2 };
+                const dx = panNow.x - localAction.panStart.x;
+                const dy = panNow.y - localAction.panStart.y;
+                viewport.panX += dx;
+                viewport.panY += dy;
+                localAction.panStart = panNow;
+                const touchNowDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                const zoomFactor = touchNowDist / localAction.touchStartDist;
+                const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * zoomFactor));
+                const worldX = (panNow.x - viewport.panX) / viewport.zoom;
+                const worldY = (panNow.y - viewport.panY) / viewport.zoom;
+                viewport.panX = panNow.x - worldX * newZoom;
+                viewport.panY = panNow.y - worldY * newZoom;
+                viewport.zoom = newZoom;
+                localAction.touchStartDist = touchNowDist;
+                redrawCanvas();
+            }
+        }
+        function handleTouchEnd(e) {
+            e.preventDefault();
+            endAction(e);
+            if(e.touches.length < 2) {
+                 localAction.isPanning = false;
+                 setCursor(tool);
+            }
+        }
     });
-    </script>
+</script>
+
 </body>
 </html>
