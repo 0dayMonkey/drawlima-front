@@ -473,7 +473,7 @@
                         redrawCanvas();
                     }
                     break;
-                case 'stroke_deleted':
+                case 'delete_stroke':
                     committedStrokes = committedStrokes.filter(s => s.id !== payload.strokeId);
                     redrawCanvas();
                     break;
