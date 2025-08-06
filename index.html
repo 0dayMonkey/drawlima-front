@@ -168,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
         drawingState.username = username;
         // IMPORTANT: Use 'wss://' for secure WebSocket connections on a live, HTTPS site.
         // This connects to the VPS domain you provided.
-        ws = new WebSocket('wss://miaou.vps.webdock.cloud/drawlima');
+        ws = new WebSocket('wss://miaou.vps.webdock.cloud/drawlima/');
 
         ws.onopen = () => {
             console.log('[Client] WebSocket connection established.');
