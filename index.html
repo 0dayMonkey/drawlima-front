@@ -2,44 +2,49 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DrawLima - Collaborative Whiteboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>DrawLima - Infinite Canvas</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
+        /* NEW: Prevents "pull-to-refresh" and other annoying mobile browser behaviors */
+        body, html {
+            overscroll-behavior: none;
+            position: fixed; /* Prevents scrolling */
+            width: 100%;
+            height: 100%;
+        }
         body {
             font-family: 'Poppins', sans-serif;
             background-color: #F8F9FA;
             overflow: hidden;
-            cursor: none; /* Hide the default system cursor */
+            cursor: none;
         }
         canvas, #cursors-container {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            /* NEW: Disable browser gestures like pinch-zoom and double-tap zoom on the canvas itself */
+            touch-action: none;
         }
-        #cursors-container {
-            pointer-events: none; /* Allows clicks to go through to the canvas */
-            z-index: 10;
-        }
+        #cursors-container { pointer-events: none; z-index: 10; }
         .user-cursor {
-            position: absolute;
-            display: flex;
-            align-items: center;
-            transition: transform 0.1s linear; /* Smooth cursor movement */
+            position: absolute; display: flex; align-items: center;
+            transition: transform 0.05s linear; /* Faster transition for smoother feel */
         }
         .cursor-label {
-            padding: 2px 8px;
-            border-radius: 9999px;
-            color: white;
-            font-size: 12px;
-            font-weight: 500;
-            margin-left: 4px;
+            padding: 2px 8px; border-radius: 9999px; color: white;
+            font-size: 12px; font-weight: 500; margin-left: 4px;
             white-space: nowrap;
+        }
+        /* NEW: Disable text selection for a more app-like feel on mobile */
+        .no-select {
+            -webkit-user-select: none; /* Safari */
+            -ms-user-select: none; /* IE 10+ */
+            user-select: none; /* Standard */
+            -webkit-touch-callout: none; /* Disable callout on long press (iOS) */
         }
         @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
@@ -47,7 +52,7 @@
         .animate-slide-up { animation: slideUp 0.5s ease-out forwards; }
     </style>
 </head>
-<body class="antialiased">
+<body class="antialiased no-select">
 
     <canvas id="whiteboard-canvas"></canvas>
     <div id="cursors-container"></div>
@@ -62,7 +67,7 @@
             </form>
         </div>
     </div>
-
+    
     <div id="toolbar" class="fixed bottom-0 left-0 w-full sm:left-1/2 sm:bottom-6 sm:w-auto sm:-translate-x-1/2 bg-white sm:rounded-2xl shadow-xl p-3 flex items-center justify-center space-x-2 sm:space-x-4 opacity-0">
         <div class="flex items-center space-x-1 sm:space-x-2">
             <button class="color-swatch w-7 h-7 rounded-full transition transform hover:scale-110 active:scale-95" data-color="#EF4444" style="background-color: #EF4444;"></button>
@@ -102,15 +107,46 @@ document.addEventListener('DOMContentLoaded', () => {
     const eraserBtn = document.getElementById('eraser-btn');
 
     // 2. STATE
+    let drawingHistory = [];
+    const view = { x: window.innerWidth / 2, y: window.innerHeight / 2, zoom: 1.0 }; // Start centered
     let isDrawing = false;
-    let lastX = 0, lastY = 0;
+    let isPanning = false;
+    let panStart = { x: 0, y: 0 };
+    let lastPos = { x: 0, y: 0 };
     const canvasBackgroundColor = '#F8F9FA';
     let localUser = { id: null, username: 'Anonymous', color: '#000000' };
     let drawingState = { color: '#000000', lineWidth: 5 };
     const otherUsers = new Map();
     let ws;
 
-    // 3. SETUP
+    // 3. CORE RENDER LOOP
+    function drawScene() {
+        requestAnimationFrame(drawScene);
+        context.fillStyle = canvasBackgroundColor;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        
+        context.save();
+        context.translate(view.x, view.y);
+        context.scale(view.zoom, view.zoom);
+        
+        drawingHistory.forEach(action => {
+            if (action.type === 'draw') {
+                drawOnCanvas(action.payload);
+            }
+        });
+        
+        context.restore();
+    }
+
+    // 4. COORDINATE TRANSFORMATION
+    function screenToWorld(screenX, screenY) {
+        return {
+            x: (screenX - view.x) / view.zoom,
+            y: (screenY - view.y) / view.zoom
+        };
+    }
+    
+    // 5. SETUP & INITIALIZATION
     function resizeCanvas() {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
@@ -120,19 +156,18 @@ document.addEventListener('DOMContentLoaded', () => {
     context.lineJoin = 'round';
     context.lineCap = 'round';
     updateActiveSwatch(document.querySelector('.color-swatch[data-color="#000000"]'));
-    
-    // 4. WEBSOCKETS
+    drawScene(); // Start the render loop
+
+    // 6. WEBSOCKETS
     function initializeWebSocket(username) {
         ws = new WebSocket('wss://miaou.vps.webdock.cloud/drawlima/');
-        ws.onopen = () => {
-            console.log('[Client] Connected. Sending login...');
-            ws.send(JSON.stringify({ type: 'login', username: username }));
-        };
+        ws.onopen = () => ws.send(JSON.stringify({ type: 'login', username }));
         ws.onmessage = (event) => {
             const message = JSON.parse(event.data);
             switch (message.type) {
                 case 'welcome':
                     localUser = message.user;
+                    drawingHistory = message.drawingHistory;
                     message.allUsers.forEach(user => {
                         if (user.id !== localUser.id) createOrUpdateCursor(user);
                     });
@@ -144,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     removeCursor(message.id);
                     break;
                 case 'draw':
-                    drawOnCanvas(message.payload);
+                    drawingHistory.push(message);
                     break;
                 case 'cursor-move':
                     const user = otherUsers.get(message.id);
@@ -156,19 +191,106 @@ document.addEventListener('DOMContentLoaded', () => {
         ws.onerror = (error) => console.error('[Client] WebSocket error:', error);
     }
     
-    // 5. CURSOR LOGIC
+    // 7. INPUT HANDLERS (PAN & DRAW)
+    function handlePointerDown(e) {
+        if (e.touches && e.touches.length > 1) { // Pan with two fingers
+            isPanning = true;
+            isDrawing = false;
+            panStart.x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+            panStart.y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            return;
+        }
+        if (e.button === 2) { // Pan with right-click
+            e.preventDefault();
+            isPanning = true;
+            isDrawing = false;
+            panStart.x = e.clientX;
+            panStart.y = e.clientY;
+            return;
+        }
+        if (e.button === 0 || (e.touches && e.touches.length === 1)) { // Draw
+            isDrawing = true;
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            lastPos = screenToWorld(clientX, clientY);
+        }
+    }
+    
+    function handlePointerMove(e) {
+        e.preventDefault(); // Prevents unwanted scrolling on mobile
+        const clientX = e.touches ? e.touches[0]?.clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0]?.clientY : e.clientY;
+        
+        if (localUser.id) { // Move local cursor and send data
+            createOrUpdateCursor({ ...localUser, x: clientX, y: clientY });
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'cursor-move', payload: { x: clientX, y: clientY } }));
+            }
+        }
+        
+        if (isPanning) {
+            let currentPanX = clientX, currentPanY = clientY;
+            if (e.touches && e.touches.length > 1) {
+                currentPanX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                currentPanY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+            }
+            view.x += currentPanX - panStart.x;
+            view.y += currentPanY - panStart.y;
+            panStart = { x: currentPanX, y: currentPanY };
+            return;
+        }
+
+        if (isDrawing) {
+            const currentPos = screenToWorld(clientX, clientY);
+            const drawAction = {
+                type: 'draw',
+                payload: {
+                    x0: lastPos.x, y0: lastPos.y,
+                    x1: currentPos.x, y1: currentPos.y,
+                    color: drawingState.color,
+                    lineWidth: drawingState.lineWidth
+                }
+            };
+            drawingHistory.push(drawAction);
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(drawAction));
+            }
+            lastPos = currentPos;
+        }
+    }
+
+    function handlePointerUp(e) {
+        if (e.touches && e.touches.length > 0) { return; }
+        isDrawing = false;
+        isPanning = false;
+    }
+
+    canvas.addEventListener('mousedown', handlePointerDown);
+    canvas.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    canvas.addEventListener('touchstart', handlePointerDown, { passive: false });
+    canvas.addEventListener('touchmove', handlePointerMove, { passive: false });
+    canvas.addEventListener('touchend', handlePointerUp);
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // 8. HELPER & UI FUNCTIONS
+    function drawOnCanvas({ x0, y0, x1, y1, color, lineWidth }) {
+        context.beginPath();
+        context.moveTo(x0, y0);
+        context.lineTo(x1, y1);
+        context.strokeStyle = color;
+        context.lineWidth = lineWidth;
+        context.stroke();
+        context.closePath();
+    }
+    
     function createOrUpdateCursor(user) {
         let cursorEl = document.getElementById(`cursor-${user.id}`);
         if (!cursorEl) {
             cursorEl = document.createElement('div');
             cursorEl.id = `cursor-${user.id}`;
             cursorEl.className = 'user-cursor';
-            cursorEl.innerHTML = `
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="${user.color}" stroke="white" stroke-width="1.5">
-                    <path d="M4.028 4.223l15.753 5.251a.5.5 0 0 1 .219.724l-6.074 8.1a.5.5 0 0 1-.806-.03l-3.32-4.884a.5.5 0 0 1 .03-.606L15.5 7.5 7.71 16.94l-3.46-3.461a.5.5 0 0 1 .178-.854z"/>
-                </svg>
-                <span class="cursor-label" style="background-color: ${user.color};">${user.username}</span>
-            `;
+            cursorEl.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="${user.color}" stroke="white" stroke-width="1.5"><path d="M4.028 4.223l15.753 5.251a.5.5 0 0 1 .219.724l-6.074 8.1a.5.5 0 0 1-.806-.03l-3.32-4.884a.5.5 0 0 1 .03-.606L15.5 7.5 7.71 16.94l-3.46-3.461a.5.5 0 0 1 .178-.854z"/></svg><span class="cursor-label" style="background-color: ${user.color};">${user.username}</span>`;
             cursorsContainer.appendChild(cursorEl);
         }
         if (user.x && user.y) {
@@ -182,70 +304,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (cursorEl) cursorEl.remove();
         otherUsers.delete(userId);
     }
-
-    let lastCursorSendTime = 0;
-    document.addEventListener('mousemove', (e) => {
-        const now = Date.now();
-        if (ws && ws.readyState === WebSocket.OPEN && now - lastCursorSendTime > 50) {
-            ws.send(JSON.stringify({
-                type: 'cursor-move',
-                payload: { x: e.clientX, y: e.clientY }
-            }));
-            lastCursorSendTime = now;
-        }
-        // *** THIS IS THE FIX ***
-        // Only render the local cursor if we have an ID from the server.
-        if (localUser.id) {
-            createOrUpdateCursor({ ...localUser, x: e.clientX, y: e.clientY });
-        }
-    });
-
-    // 6. DRAWING LOGIC
-    function sendDrawData(x0, y0, x1, y1) {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: 'draw',
-                payload: { x0, y0, x1, y1, color: drawingState.color, lineWidth: drawingState.lineWidth }
-            }));
-        }
-    }
     
-    function drawOnCanvas({ x0, y0, x1, y1, color, lineWidth }) {
-        context.beginPath();
-        context.moveTo(x0, y0);
-        context.lineTo(x1, y1);
-        context.strokeStyle = color;
-        context.lineWidth = lineWidth;
-        context.stroke();
-        context.closePath();
-    }
-    
-    function startDrawing(e) {
-        isDrawing = true;
-        [lastX, lastY] = [e.offsetX, e.offsetY];
-    }
-    
-    function draw(e) {
-        if (!isDrawing) return;
-        const [currentX, currentY] = [e.offsetX, e.offsetY];
-        const data = { x0: lastX, y0: lastY, x1: currentX, y1: currentY, color: drawingState.color, lineWidth: drawingState.lineWidth };
-        drawOnCanvas(data);
-        sendDrawData(lastX, lastY, currentX, currentY);
-        [lastX, lastY] = [currentX, currentY];
-    }
-
-    function stopDrawing() { isDrawing = false; }
-    canvas.addEventListener('mousedown', startDrawing);
-    canvas.addEventListener('mousemove', draw);
-    canvas.addEventListener('mouseup', stopDrawing);
-    canvas.addEventListener('mouseout', stopDrawing);
-
-    // 7. UI EVENT HANDLERS
     usernameForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const username = usernameInput.value.trim();
         if (username) {
-            localUser.username = username;
             initializeWebSocket(username);
             usernameModal.style.display = 'none';
             toolbar.classList.add('animate-slide-up');
