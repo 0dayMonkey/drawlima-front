@@ -88,9 +88,7 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    // =========================================================================
-    // 1. ELEMENT REFERENCES (DEFINED UPFRONT TO PREVENT REFERENCE ERRORS)
-    // =========================================================================
+    // 1. ELEMENT REFERENCES
     const canvas = document.getElementById('whiteboard-canvas');
     const context = canvas.getContext('2d');
     const cursorsContainer = document.getElementById('cursors-container');
@@ -98,51 +96,38 @@ document.addEventListener('DOMContentLoaded', () => {
     const usernameForm = document.getElementById('username-form');
     const usernameInput = document.getElementById('username-input');
     const toolbar = document.getElementById('toolbar');
-    
-    // Toolbar controls
     const colorSwatches = document.querySelectorAll('.color-swatch');
     const colorPicker = document.getElementById('color-picker');
     const thicknessSlider = document.getElementById('thickness-slider');
-    const eraserBtn = document.getElementById('eraser-btn'); // Now defined here!
+    const eraserBtn = document.getElementById('eraser-btn');
 
-    // =========================================================================
-    // 2. STATE INITIALIZATION
-    // =========================================================================
+    // 2. STATE
     let isDrawing = false;
     let lastX = 0, lastY = 0;
     const canvasBackgroundColor = '#F8F9FA';
     let localUser = { id: null, username: 'Anonymous', color: '#000000' };
     let drawingState = { color: '#000000', lineWidth: 5 };
-    const otherUsers = new Map(); // Stores other users' data and cursor elements
+    const otherUsers = new Map();
     let ws;
 
-    // =========================================================================
-    // 3. CANVAS & UI SETUP
-    // =========================================================================
+    // 3. SETUP
     function resizeCanvas() {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
     }
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
-
     context.lineJoin = 'round';
     context.lineCap = 'round';
-    
-    // This call is now safe because eraserBtn is defined above.
     updateActiveSwatch(document.querySelector('.color-swatch[data-color="#000000"]'));
     
-    // =========================================================================
-    // 4. WEBSOCKET COMMUNICATION
-    // =========================================================================
+    // 4. WEBSOCKETS
     function initializeWebSocket(username) {
         ws = new WebSocket('wss://miaou.vps.webdock.cloud/drawlima/');
-
         ws.onopen = () => {
-            console.log('[Client] WebSocket connection established.');
+            console.log('[Client] Connected. Sending login...');
             ws.send(JSON.stringify({ type: 'login', username: username }));
         };
-
         ws.onmessage = (event) => {
             const message = JSON.parse(event.data);
             switch (message.type) {
@@ -167,14 +152,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     break;
             }
         };
-
         ws.onclose = () => console.log('[Client] WebSocket connection closed.');
         ws.onerror = (error) => console.error('[Client] WebSocket error:', error);
     }
     
-    // =========================================================================
     // 5. CURSOR LOGIC
-    // =========================================================================
     function createOrUpdateCursor(user) {
         let cursorEl = document.getElementById(`cursor-${user.id}`);
         if (!cursorEl) {
@@ -189,11 +171,9 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             cursorsContainer.appendChild(cursorEl);
         }
-        
         if (user.x && user.y) {
             cursorEl.style.transform = `translate(${user.x}px, ${user.y}px)`;
         }
-        
         otherUsers.set(user.id, { ...otherUsers.get(user.id), ...user });
     }
 
@@ -213,12 +193,14 @@ document.addEventListener('DOMContentLoaded', () => {
             }));
             lastCursorSendTime = now;
         }
-        createOrUpdateCursor({ ...localUser, x: e.clientX, y: e.clientY });
+        // *** THIS IS THE FIX ***
+        // Only render the local cursor if we have an ID from the server.
+        if (localUser.id) {
+            createOrUpdateCursor({ ...localUser, x: e.clientX, y: e.clientY });
+        }
     });
 
-    // =========================================================================
     // 6. DRAWING LOGIC
-    // =========================================================================
     function sendDrawData(x0, y0, x1, y1) {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -258,9 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.addEventListener('mouseup', stopDrawing);
     canvas.addEventListener('mouseout', stopDrawing);
 
-    // =========================================================================
     // 7. UI EVENT HANDLERS
-    // =========================================================================
     usernameForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const username = usernameInput.value.trim();
