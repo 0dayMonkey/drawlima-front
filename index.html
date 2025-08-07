@@ -223,8 +223,6 @@
     </div>
 
 <script>
-    // The entire JavaScript logic remains here, with no changes needed.
-    // It already contains the necessary touch event handlers.
     document.addEventListener('DOMContentLoaded', () => {
 
         // --- CONFIGURATION ---
@@ -493,16 +491,28 @@
             canvas.addEventListener('touchend', handleTouchEnd);
         }
         
+        // ✨ GETS CORRECTED COORDINATES
+        function getCanvasCoordinates(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+        
         function startAction(e) {
-            if (e.button === 2) {
+            if (e.button === 2) { // Right-click for panning
                 localAction.isPanning = true;
                 localAction.panStart = { x: e.clientX, y: e.clientY };
                 setCursor('panning');
                 return;
             }
-            if (e.button !== 0) return;
+            if (e.button !== 0 && !e.touches) return; // Allow touch events
             
-            let [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
+            const { x: canvasX, y: canvasY } = getCanvasCoordinates(e);
+            let [worldX, worldY] = screenToWorld(canvasX, canvasY);
             worldX = Math.max(0, Math.min(viewport.worldWidth, worldX));
             worldY = Math.max(0, Math.min(viewport.worldHeight, worldY));
 
@@ -531,7 +541,8 @@
                 return;
             }
 
-            let [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
+            const { x: canvasX, y: canvasY } = getCanvasCoordinates(e);
+            let [worldX, worldY] = screenToWorld(canvasX, canvasY);
             worldX = Math.max(0, Math.min(viewport.worldWidth, worldX));
             worldY = Math.max(0, Math.min(viewport.worldHeight, worldY));
 
@@ -575,13 +586,14 @@
         }
         
         function eraseAtPoint(x, y) {
-            const eraserRadius = 10;
+            const eraserRadius = 15; // Slightly larger for easier touch erasing
             let needsRedraw = false;
             for (let i = committedStrokes.length - 1; i >= 0; i--) {
                 const stroke = committedStrokes[i];
                 if (stroke.userId !== userId) continue;
                 for (const point of stroke.points) {
-                    if (Math.hypot(point.x - x, point.y - y) < eraserRadius / viewport.zoom) {
+                    // Check distance against a thicker line for better collision detection
+                    if (Math.hypot(point.x - x, point.y - y) < (eraserRadius + stroke.thickness / 2) / viewport.zoom) {
                         sendMessage('delete_stroke', { strokeId: stroke.id });
                         committedStrokes.splice(i, 1);
                         needsRedraw = true;
@@ -725,9 +737,12 @@
             e.preventDefault();
             const zoomAmount = e.deltaY * -0.001;
             const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * (1 + zoomAmount)));
-            const [worldX, worldY] = screenToWorld(e.clientX, e.clientY);
-            viewport.panX = e.clientX - worldX * newZoom;
-            viewport.panY = e.clientY - worldY * newZoom;
+            
+            const { x: mouseX, y: mouseY } = getCanvasCoordinates(e); // Corrected coordinates
+            const [worldX, worldY] = screenToWorld(mouseX, mouseY);
+
+            viewport.panX = mouseX - worldX * newZoom;
+            viewport.panY = mouseY - worldY * newZoom;
             viewport.zoom = newZoom;
             redrawCanvas();
             updateAllCursorPositions();
@@ -735,22 +750,30 @@
         function handleTouchStart(e) {
             e.preventDefault();
             if (e.touches.length === 1) {
-                startAction({ button: 0, clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+                startAction(e);
             } else if (e.touches.length === 2) {
-                if (localAction.isDrawing) endAction(e); // End any single-finger drawing before starting pan/zoom
+                if (localAction.isDrawing) endAction(e);
                 localAction.isPanning = true;
-                localAction.panStart = { x: (e.touches[0].clientX + e.touches[1].clientX) / 2, y: (e.touches[0].clientY + e.touches[1].clientY) / 2 };
-                localAction.touchStartDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                
+                const rect = canvas.getBoundingClientRect();
+                const p1 = { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+                const p2 = { x: e.touches[1].clientX - rect.left, y: e.touches[1].clientY - rect.top };
+
+                localAction.panStart = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+                localAction.touchStartDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
                 setCursor('panning');
             }
         }
         function handleTouchMove(e) {
             e.preventDefault();
             if (e.touches.length === 1 && !localAction.isPanning) {
-                moveAction({ clientX: e.touches[0].clientX, clientY: e.touches[0].clientY });
+                moveAction(e);
             } else if (e.touches.length === 2 && localAction.isPanning) {
-                const panNow = { x: (e.touches[0].clientX + e.touches[1].clientX) / 2, y: (e.touches[0].clientY + e.touches[1].clientY) / 2 };
-                const touchNowDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                const rect = canvas.getBoundingClientRect();
+                const p1 = { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+                const p2 = { x: e.touches[1].clientX - rect.left, y: e.touches[1].clientY - rect.top };
+                const panNow = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+                const touchNowDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
                 
                 // Panning
                 const dx = panNow.x - localAction.panStart.x;
@@ -774,7 +797,8 @@
         }
         function handleTouchEnd(e) {
             e.preventDefault();
-            endAction(e);
+            // Call endAction regardless, to clean up any drawing/erasing state
+            endAction(e); 
             if(e.touches.length < 2) {
                  localAction.isPanning = false;
                  setCursor(tool);
