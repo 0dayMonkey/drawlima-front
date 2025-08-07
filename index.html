@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Drawlima - Collaborative Whiteboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -104,14 +104,26 @@
     </script>
 
     <style type="text/tailwindcss">
+        html, body {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+        }
         body {
             font-family: 'Poppins', sans-serif;
             background-color: #F8F9FA;
             overscroll-behavior: none;
+            /* MODIFIÉ: Désactive la sélection de texte globalement */
+            user-select: none;
         }
         #whiteboard-canvas {
-            touch-action: none; /* Critical for mobile: prevents page scroll/zoom during canvas interaction */
+            touch-action: none;
         }
+        /* MODIFIÉ: Gestion fine du scroll par vue */
+        #view-lobby { overflow-y: auto; }
+        #view-whiteboard { overflow: hidden; }
+
         @layer components {
             .card { @apply bg-white rounded-xl shadow-lg transition-all; }
             .btn { @apply px-4 py-2 rounded-lg font-semibold text-white transition-all duration-150 ease-in-out select-none; }
@@ -131,9 +143,9 @@
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
-<body class="overflow-hidden">
+<body class="w-screen h-screen">
 
-    <div id="app-container" class="w-screen h-screen">
+    <div id="app-container" class="w-full h-full">
 
         <div id="modal-username" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 fade-in">
             <div class="card w-full max-w-sm p-6 sm:p-8 text-center mx-4 sm:mx-0">
@@ -146,7 +158,7 @@
             </div>
         </div>
 
-        <div id="view-lobby" class="hidden w-full h-full p-4 md:p-8 overflow-y-auto">
+        <div id="view-lobby" class="hidden w-full h-full p-4 md:p-8">
             <div class="max-w-4xl mx-auto">
                 <div class="flex flex-wrap justify-between items-center gap-y-4 mb-6">
                     <h1 class="text-3xl font-bold text-gray-800">Whiteboards</h1>
@@ -209,13 +221,16 @@
                 <button id="btn-back-to-lobby" class="btn btn-secondary text-sm">Lobby</button>
             </div>
             
-            <div id="user-list-overlay" class="absolute top-4 right-4 card p-2 sm:p-3 flex flex-col gap-2">
+            <div id="user-list-overlay" class="absolute top-4 right-4 card p-2 sm:p-3 flex flex-col gap-2 max-w-[60%] sm:max-w-xs">
                 <div>
                     <h3 class="font-semibold text-sm mb-2">Online</h3>
                     <div id="user-list-content" class="flex flex-col gap-1"></div>
                 </div>
                 <div class="border-t border-gray-200 pt-2 mt-1">
-                    <span class="text-xs text-gray-500">Connected as: <strong id="whiteboard-username" class="font-medium text-gray-700"></strong></span>
+                    <div class="text-xs text-gray-500 truncate">
+                        Connected as: 
+                        <strong id="whiteboard-username" class="font-medium text-gray-700 inline-block max-w-full truncate align-bottom"></strong>
+                    </div>
                     <button id="btn-logout-whiteboard" class="block w-full text-left text-sm text-red-500 hover:text-red-700 font-semibold mt-1">Logout</button>
                 </div>
            </div>
@@ -491,7 +506,6 @@
             canvas.addEventListener('touchend', handleTouchEnd);
         }
         
-        // ✨ GETS CORRECTED COORDINATES
         function getCanvasCoordinates(e) {
             const rect = canvas.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -503,13 +517,13 @@
         }
         
         function startAction(e) {
-            if (e.button === 2) { // Right-click for panning
+            if (e.button === 2) {
                 localAction.isPanning = true;
                 localAction.panStart = { x: e.clientX, y: e.clientY };
                 setCursor('panning');
                 return;
             }
-            if (e.button !== 0 && !e.touches) return; // Allow touch events
+            if (e.button !== 0 && !e.touches) return;
             
             const { x: canvasX, y: canvasY } = getCanvasCoordinates(e);
             let [worldX, worldY] = screenToWorld(canvasX, canvasY);
@@ -586,13 +600,12 @@
         }
         
         function eraseAtPoint(x, y) {
-            const eraserRadius = 15; // Slightly larger for easier touch erasing
+            const eraserRadius = 15;
             let needsRedraw = false;
             for (let i = committedStrokes.length - 1; i >= 0; i--) {
                 const stroke = committedStrokes[i];
                 if (stroke.userId !== userId) continue;
                 for (const point of stroke.points) {
-                    // Check distance against a thicker line for better collision detection
                     if (Math.hypot(point.x - x, point.y - y) < (eraserRadius + stroke.thickness / 2) / viewport.zoom) {
                         sendMessage('delete_stroke', { strokeId: stroke.id });
                         committedStrokes.splice(i, 1);
@@ -679,7 +692,7 @@
             setCursor(tool);
         }
         function setCursor(cursorType) {
-            canvas.className = ''; // Clear all cursor classes
+            canvas.className = '';
             if (cursorType === 'brush') canvas.classList.add('drawing-cursor');
             if (cursorType === 'eraser') canvas.classList.add('eraser-cursor');
             if (cursorType === 'panning') canvas.classList.add('panning-cursor');
@@ -690,12 +703,14 @@
         function updateUserList() {
             userListContent.innerHTML = '';
             const selfEl = document.createElement('div');
-            selfEl.className = 'text-sm font-semibold text-blue-600';
+            // MODIFIÉ: Ajout de 'truncate' pour couper les noms longs
+            selfEl.className = 'text-sm font-semibold text-blue-600 truncate';
             selfEl.textContent = `${username} (You)`;
             userListContent.appendChild(selfEl);
             otherUsersInRoom.forEach(user => {
                  const userEl = document.createElement('div');
-                 userEl.className = 'text-sm text-gray-600';
+                 // MODIFIÉ: Ajout de 'truncate' pour couper les noms longs
+                 userEl.className = 'text-sm text-gray-600 truncate';
                  userEl.textContent = user.username;
                  userListContent.appendChild(userEl);
             });
@@ -738,7 +753,7 @@
             const zoomAmount = e.deltaY * -0.001;
             const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * (1 + zoomAmount)));
             
-            const { x: mouseX, y: mouseY } = getCanvasCoordinates(e); // Corrected coordinates
+            const { x: mouseX, y: mouseY } = getCanvasCoordinates(e);
             const [worldX, worldY] = screenToWorld(mouseX, mouseY);
 
             viewport.panX = mouseX - worldX * newZoom;
@@ -775,14 +790,12 @@
                 const panNow = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
                 const touchNowDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
                 
-                // Panning
                 const dx = panNow.x - localAction.panStart.x;
                 const dy = panNow.y - localAction.panStart.y;
                 viewport.panX += dx;
                 viewport.panY += dy;
                 localAction.panStart = panNow;
 
-                // Zooming
                 const zoomFactor = touchNowDist / localAction.touchStartDist;
                 const newZoom = Math.max(0.1, Math.min(5, viewport.zoom * zoomFactor));
                 const [worldX, worldY] = screenToWorld(panNow.x, panNow.y);
@@ -797,7 +810,6 @@
         }
         function handleTouchEnd(e) {
             e.preventDefault();
-            // Call endAction regardless, to clean up any drawing/erasing state
             endAction(e); 
             if(e.touches.length < 2) {
                  localAction.isPanning = false;
@@ -805,6 +817,7 @@
             }
         }
 
+        // --- Start the Application ---
         init();
     });
 </script>
