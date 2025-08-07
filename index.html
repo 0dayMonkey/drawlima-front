@@ -104,30 +104,34 @@
     </script>
 
     <style type="text/tailwindcss">
-        html, body {
+        html {
+            /* Assure que la hauteur est une référence stable pour le body */
             height: 100%;
+        }
+        body {
             width: 100%;
             margin: 0;
             padding: 0;
-        }
-        body {
             font-family: 'Poppins', sans-serif;
             background-color: #F8F9FA;
             overscroll-behavior: none;
             user-select: none;
         }
+        /* MODIFIÉ: La solution robuste pour la hauteur sur tous les navigateurs mobiles */
+        #app-container {
+            height: 100vh; /* Fallback pour anciens navigateurs */
+            height: 100dvh; /* Unité dynamique pour tous les navigateurs modernes */
+        }
         #whiteboard-canvas {
             touch-action: none;
         }
-        
-        /* MODIFIÉ: Gestion du scroll et de la scrollbar invisible */
         #view-lobby {
             overflow-y: auto;
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;  /* Firefox */
+            -ms-overflow-style: none;
+            scrollbar-width: none;
         }
         #view-lobby::-webkit-scrollbar {
-            display: none; /* Chrome, Safari, and Opera */
+            display: none;
         }
         #view-whiteboard {
             overflow: hidden;
@@ -152,9 +156,9 @@
         @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
-<body class="w-screen h-screen">
+<body class="w-screen">
 
-    <div id="app-container" class="w-full h-full">
+    <div id="app-container" class="w-full">
 
         <div id="modal-username" class="hidden fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center z-50 fade-in">
             <div class="card w-full max-w-sm p-6 sm:p-8 text-center mx-4 sm:mx-0">
@@ -248,7 +252,7 @@
 
 <script>
     // Le code Javascript reste identique à la version précédente.
-    // Les corrections sont purement dans le HTML et le CSS.
+    // Les corrections sont purement dans le CSS et la structure HTML.
     document.addEventListener('DOMContentLoaded', () => {
 
         // --- CONFIGURATION ---
@@ -496,6 +500,7 @@
         }
 
         function resizeCanvas() {
+            // Utilise innerWidth et innerHeight pour s'adapter à la taille de la fenêtre visible
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
             redrawCanvas();
